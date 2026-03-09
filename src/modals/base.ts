@@ -1,0 +1,98 @@
+export async function customPrompt(title: string, defaultValue = "", text = ""): Promise<string | null> {
+    return new Promise((resolve) => {
+        const overlay = document.createElement('div');
+        overlay.className = 'modal-overlay';
+        
+        document.body.appendChild(overlay);
+        void overlay.offsetWidth;
+        overlay.classList.add('active');
+        
+        overlay.innerHTML = `
+            <div class="modal-content">
+                <h3>${title}</h3>
+                <div style="margin-top: 1rem;">
+                    <input type="text" id="prompt-input" style="width: 100%; border: 1px solid var(--border-color); background: var(--bg-dark); color: var(--text-primary); padding: 0.5rem; border-radius: var(--radius-sm);" value="${defaultValue}" autocomplete="off" />
+                </div>
+                ${text ? `<p style="margin-top: 0.5rem; font-size: 0.85rem; color: var(--text-secondary);">${text}</p>` : ''}
+                <div style="display: flex; justify-content: flex-end; gap: 1rem; margin-top: 1.5rem;">
+                    <button class="btn btn-ghost" id="prompt-cancel">Cancel</button>
+                    <button class="btn btn-primary" id="prompt-confirm">OK</button>
+                </div>
+            </div>
+        `;
+        
+        const input = overlay.querySelector('#prompt-input') as HTMLInputElement;
+        
+        const cleanup = () => {
+             overlay.classList.remove('active');
+             setTimeout(() => overlay.remove(), 300);
+        };
+        
+        overlay.querySelector('#prompt-cancel')!.addEventListener('click', () => { cleanup(); resolve(null); });
+        overlay.querySelector('#prompt-confirm')!.addEventListener('click', () => { cleanup(); resolve(input.value); });
+        input.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') { cleanup(); resolve(input.value); }
+            if (e.key === 'Escape') { cleanup(); resolve(null); }
+        });
+        
+        input.focus();
+    });
+}
+
+export async function customConfirm(title: string, text: string, confirmButtonClass = "btn-danger", confirmButtonText = "Yes"): Promise<boolean> {
+    return new Promise((resolve) => {
+        const overlay = document.createElement('div');
+        overlay.className = 'modal-overlay';
+        
+        document.body.appendChild(overlay);
+        void overlay.offsetWidth;
+        overlay.classList.add('active');
+        
+        overlay.innerHTML = `
+            <div class="modal-content">
+                <h3>${title}</h3>
+                <p style="margin-top: 1rem; color: var(--text-secondary);">${text}</p>
+                <div style="display: flex; justify-content: flex-end; gap: 1rem; margin-top: 1.5rem;">
+                    <button class="btn btn-ghost" id="confirm-cancel">Cancel</button>
+                    <button class="btn ${confirmButtonClass}" id="confirm-ok">${confirmButtonText}</button>
+                </div>
+            </div>
+        `;
+        
+        const cleanup = () => {
+             overlay.classList.remove('active');
+             setTimeout(() => overlay.remove(), 300);
+        };
+        
+        overlay.querySelector('#confirm-cancel')!.addEventListener('click', () => { cleanup(); resolve(false); });
+        overlay.querySelector('#confirm-ok')!.addEventListener('click', () => { cleanup(); resolve(true); });
+    });
+}
+
+export async function customAlert(title: string, text: string): Promise<void> {
+    return new Promise((resolve) => {
+        const overlay = document.createElement('div');
+        overlay.className = 'modal-overlay';
+        
+        document.body.appendChild(overlay);
+        void overlay.offsetWidth;
+        overlay.classList.add('active');
+        
+        overlay.innerHTML = `
+            <div class="modal-content">
+                <h3>${title}</h3>
+                <p style="margin-top: 1rem; color: var(--text-secondary);">${text}</p>
+                <div style="display: flex; justify-content: flex-end; margin-top: 1.5rem;">
+                    <button class="btn btn-primary" id="alert-ok">OK</button>
+                </div>
+            </div>
+        `;
+        
+        const cleanup = () => {
+             overlay.classList.remove('active');
+             setTimeout(() => overlay.remove(), 300);
+        };
+        
+        overlay.querySelector('#alert-ok')!.addEventListener('click', () => { cleanup(); resolve(); });
+    });
+}

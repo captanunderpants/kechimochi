@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Kechimochi Activity Tracker</title>
+    <link rel="stylesheet" href="/src/styles.css" />
+  </head>
+  <body>
+    <div id="app">
+      <!-- Topbar -->
+      <!-- Title Bar -->
+      <div class="title-bar">
+        <div class="logo" data-tauri-drag-region style="display: flex; align-items: center; gap: 0.5rem; flex: 1; height: 100%;">
+          <img src="/logo.png" style="height: 20px; width: 20px;" alt="Logo" />
+          <h1 style="margin: 0; font-size: 0.85rem; font-weight: 500;">ケチモチ</h1>
+        </div>
+        <div class="window-controls">
+           <button class="win-btn" id="win-min" title="Minimize">
+              <svg width="10" height="10" viewBox="0 0 12 12"><rect fill="currentColor" x="1" y="5" width="10" height="1.5"/></svg>
+           </button>
+           <button class="win-btn" id="win-max" title="Maximize">
+              <svg width="10" height="10" viewBox="0 0 12 12"><rect fill="none" stroke="currentColor" stroke-width="1.2" x="2" y="2" width="8" height="8"/></svg>
+           </button>
+           <button class="win-btn win-btn-close" id="win-close" title="Close">
+              <svg width="10" height="10" viewBox="0 0 12 12"><path fill="currentColor" d="M10.5,2.5,9.5,1.5,6,5,2.5,1.5,1.5,2.5,5,6,1.5,9.5,2.5,10.5,6,7,9.5,10.5,10.5,9.5,7,6Z"/></svg>
+           </button>
+        </div>
+      </div>
+
+      <!-- Navigation Bar -->
+      <header class="app-nav-bar">
+        <nav class="topbar-nav" id="main-nav">
+          <a class="nav-link active" data-view="dashboard">Dashboard</a>
+          <a class="nav-link" data-view="media">Library</a>
+          <a class="nav-link" data-view="profile">Profile</a>
+        </nav>
+        
+        <div style="flex: 1"></div>
+        
+        <div style="display: flex; gap: 0.75rem; align-items: center;">
+          <div style="display: flex; align-items: center; gap: 0.5rem; background: var(--bg-dark); padding: 0.2rem 0.5rem; border-radius: var(--radius-md); border: 1px solid var(--border-color);">
+             <select id="select-profile" style="border: none; background: transparent; padding: 0; outline: none; font-size: 0.9rem; font-weight: 500; cursor: pointer;">
+                 <option value="default">default</option>
+             </select>
+             <button class="btn btn-ghost" id="btn-add-profile" style="padding: 0.1rem 0.4rem; font-size: 0.75rem;" title="Add new user">+</button>
+             <button class="btn btn-ghost" id="btn-delete-profile" style="padding: 0.1rem 0.4rem; font-size: 0.75rem;" title="Delete current user">-</button>
+          </div>
+          <button class="btn btn-primary" id="btn-add-activity">Log Activity</button>
+        </div>
+      </header>
+
+      <!-- Main Content Area -->
+      <main class="main-content" id="view-container">
+        <!-- Views will be dynamically injected here -->
+      </main>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
