@@ -56,11 +56,15 @@ Kechimochi is a **desktop activity tracker** designed for people studying langua
 
 - **Media Grid**: A grid view to track your media titles.
 - **Power Search**: Real time fuzzy search
-- **Advanced Filtering**: Filter your library by activity type or status
+- **Advanced Filtering**: Filter your library by activity type, status, or immersion category (Reading/Listening/Playing)
+- **Sorting**: Sort library by Recent, Title, Time, Characters Read, Reading Speed, or Finished Date with ascending/descending toggle
+- **Hidden Entries**: Auto-hides entries with no cover and non-Ongoing status; manually hide/unhide via right-click context menu
 - **Media Details**: A comprehensive view for each title including:
   - **Metadata Management**: Edit titles, descriptions, and custom fields.
   - **Contextual Tagging**: Smart content types tailored to the activity type.
   - **Progress Tracking**: Update statuses like Ongoing, Complete, Dropped, etc.
+  - **Personal Stats**: Total characters read, total time, reading speed (文字/hour), first and last activity dates.
+  - **NSFW Toggle**: Mark entries as NSFW with blur-on-hover in the grid.
 
 ### Metadata Importers
 
@@ -71,11 +75,6 @@ Automatically fetch covers, descriptions, and metadata from various sources:
 - **Anime and Movies**: AniList, IMDb
 - **Video Games**: Backloggd
   With Jiten.moe metadata integration
-
-### Reading Analysis
-
-- **Reading Report Card**: Analyzes your reading speed across media types.
-- **Progress Projections**: Estimates remaining time and completion rates for active content based on your historical trends.
 
 ### Multi-Profile and Personalization
 
@@ -191,13 +190,13 @@ Date,Log Name,Media Type,Characters Read,Duration
 2024-01-16,呪術廻戦,Listening,,25
 ```
 
-| Column            | Description                                                   |
-| ----------------- | ------------------------------------------------------------- |
-| `Date`            | `YYYY-MM-DD` format                                           |
-| `Log Name`        | Title of the media                                            |
-| `Media Type`      | One of: `Reading`, `Watching`, `Playing`, `Listening`, `None` |
-| `Characters Read` | Number of characters read (required for `Reading` type)       |
-| `Duration`        | Duration in minutes (integer)                                 |
+| Column            | Description                                                                                                                      |
+| ----------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `Date`            | `YYYY-MM-DD` format                                                                                                              |
+| `Log Name`        | Title of the media                                                                                                               |
+| `Media Type`      | Content type (e.g. `Visual Novel`, `Manga`, `Anime`, `Book`, `Light Novel`, `JRPG`, `Audiobook`, `Podcast`, `JDrama`, `Youtube`) |
+| `Characters Read` | Number of characters read (required for Reading types; supports comma-formatted numbers like `15,000`)                           |
+| `Duration`        | Duration in minutes (integer) or `HH:MM:SS` / `MM:SS` format                                                                     |
 
 ## Data Storage
 
@@ -212,3 +211,13 @@ Each profile has its own database file named `kechimochi_<profilename>.db`.
 ## License
 
 This project is provided as-is with no warranty. See the warning at the top of this document.
+
+## Changelog
+
+### 2026-03-10
+
+- **Sort UI redesign**: Replaced individual ascending/descending sort options (e.g. "Time ↓", "Time ↑") with a single sort dropdown plus a ↑/↓ toggle button that controls direction for all sort types.
+- **Finished Date sort**: Added a new "Finished" sort option that orders entries by their last activity date.
+- **Last activity date tracking**: Added `last_activity_date` field to the Media model, populated from the most recent activity log entry via SQL.
+- **Removed Reading Report Card**: Removed the report card feature from the Profile page (state, UI, calculation logic, and settings storage).
+- **Default sort fix**: Fixed default "Recent" sort to correctly show most recently updated entries first (descending).
