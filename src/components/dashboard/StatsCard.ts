@@ -37,6 +37,11 @@ export class StatsCard extends Component<StatsCardState> {
         const totalAvgFormat = formatDuration(totalAvgMins);
         const totalHours = (totalMins / 60).toFixed(1);
 
+        let totalChars = 0;
+        for (const log of logs) {
+            if (log.characters_read > 0) totalChars += log.characters_read;
+        }
+
         if (uniqueDates.length > 0) {
             let streakCount = 1;
             let maxS = 1;
@@ -126,8 +131,15 @@ export class StatsCard extends Component<StatsCardState> {
                         </div>
                     </div>
                     
-                    <div style="background: var(--accent-green); padding: 0.6rem; border-radius: var(--radius-sm); text-align: center; color: var(--accent-text); font-weight: 700; font-size: 1.1rem;">
-                        ${totalHours} hours
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem;">
+                        <div style="background: var(--accent-green); padding: 0.4rem; border-radius: var(--radius-sm); text-align: center; color: var(--accent-text); font-weight: 600; font-size: 0.8rem;">
+                            <div style="font-size: 0.95rem; font-weight: 700;">${totalChars.toLocaleString()}</div>
+                            <div style="font-size: 0.6rem; opacity: 0.85;">文字</div>
+                        </div>
+                        <div style="background: var(--accent-green); padding: 0.4rem; border-radius: var(--radius-sm); text-align: center; color: var(--accent-text); font-weight: 600; font-size: 0.8rem;">
+                            <div style="font-size: 0.95rem; font-weight: 700;">${totalHours}</div>
+                            <div style="font-size: 0.6rem; opacity: 0.85;">hours</div>
+                        </div>
                     </div>
                     <div style="background: var(--accent-purple); padding: 0.5rem; border-radius: var(--radius-sm); text-align: center; color: var(--accent-text); font-weight: 600; font-size: 0.85rem;">
                         Total Avg: ${totalAvgFormat} / day

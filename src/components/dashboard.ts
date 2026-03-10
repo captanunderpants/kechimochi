@@ -18,6 +18,7 @@ interface DashboardState {
         pieGroupByMode: 'media_type' | 'log_name';
         charsGroupByMode: 'media_type' | 'log_name';
         chartType: 'bar' | 'line';
+        barMetric: 'time' | 'chars';
     }
 }
 
@@ -41,7 +42,8 @@ export class Dashboard extends Component<DashboardState> {
                 groupByMode: 'log_name',
                 pieGroupByMode: 'log_name',
                 charsGroupByMode: 'log_name',
-                chartType: 'bar'
+                chartType: 'bar',
+                barMetric: 'time'
             }
         });
     }

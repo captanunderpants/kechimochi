@@ -12,6 +12,7 @@ interface ActivityChartsState {
     pieGroupByMode: 'media_type' | 'log_name';
     charsGroupByMode: 'media_type' | 'log_name';
     chartType: 'bar' | 'line';
+    barMetric: 'time' | 'chars';
 }
 
 export class ActivityCharts extends Component<ActivityChartsState> {
@@ -41,6 +42,7 @@ export class ActivityCharts extends Component<ActivityChartsState> {
                     <div class="chart-container-wrapper" style="flex: 1; min-height: 0;">
                         <canvas id="pieChart"></canvas>
                     </div>
+                    <div id="pie-total" style="text-align: center; margin-top: 0.5rem; font-size: 0.85rem; font-weight: 600; color: var(--text-secondary);"></div>
                 </div>
                 <div class="card" style="display: flex; flex-direction: column; min-width: 0;">
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
@@ -50,15 +52,17 @@ export class ActivityCharts extends Component<ActivityChartsState> {
                     <div class="chart-container-wrapper" style="flex: 1; min-height: 0;">
                         <canvas id="charsChart"></canvas>
                     </div>
+                    <div id="chars-total" style="text-align: center; margin-top: 0.5rem; font-size: 0.85rem; font-weight: 600; color: var(--text-secondary);"></div>
                 </div>
                 <div class="card" style="display: flex; flex-direction: column; min-width: 0;">
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
                         <div style="display: flex; align-items: center; gap: 0.5rem;">
                             <button class="btn btn-ghost" style="padding: 0.1rem 0.4rem;" id="btn-chart-prev">&lt;</button>
                             <h3 style="margin: 0;">Activity visualization</h3>
-                            <button class="btn btn-ghost" style="padding: 0.1rem 0.4rem;" id="btn-chart-next">&gt;</button>
+                            <button class="btn btn-ghost" style="padding: 0.1rem 0.4rem; ${this.state.timeRangeOffset === 0 ? 'opacity: 0.3; cursor: default;' : ''}" id="btn-chart-next">&gt;</button>
                         </div>
                         <div style="display: flex; gap: 0.5rem;">
+                            <button class="btn btn-ghost btn-cycle" id="btn-bar-metric" style="font-size: 0.8rem; padding: 0.3rem 0.6rem;">${this.state.barMetric === 'time' ? 'Time' : '文字'}</button>
                             <button class="btn btn-ghost btn-cycle" id="btn-chart-type" style="font-size: 0.8rem; padding: 0.3rem 0.6rem;">${this.state.chartType === 'bar' ? 'Bar' : 'Line'}</button>
                             <button class="btn btn-ghost btn-cycle" id="btn-time-range" style="font-size: 0.8rem; padding: 0.3rem 0.6rem;">${this.state.timeRangeDays === 7 ? 'Weekly' : this.state.timeRangeDays === 30 ? 'Monthly' : 'Yearly'}</button>
                             <button class="btn btn-ghost btn-cycle" id="btn-group-by" style="font-size: 0.8rem; padding: 0.3rem 0.6rem;">${this.state.groupByMode === 'media_type' ? 'By Type' : 'By Media'}</button>
@@ -103,6 +107,46 @@ export class ActivityCharts extends Component<ActivityChartsState> {
     }
 
     private setupListeners(layout: HTMLElement) {
+        const { logs, timeRangeDays, timeRangeOffset } = this.state;
+
+        // Find earliest log date to determine left arrow bound
+        let earliestDate = '';
+        for (const log of logs) {
+            if (!earliestDate || log.date < earliestDate) earliestDate = log.date;
+        }
+
+        const prevBtn = layout.querySelector('#btn-chart-prev') as HTMLElement | null;
+
+        // Check if going back one more would be past the earliest data
+        if (prevBtn && earliestDate) {
+            const today = new Date();
+            let wouldBeEmpty = false;
+            if (timeRangeDays === 7) {
+                const endDay = new Date(today);
+                endDay.setDate(today.getDate() - (7 * (timeRangeOffset + 1)));
+                const startDay = new Date(endDay);
+                const dow = endDay.getDay();
+                const diff = dow === 0 ? 6 : dow - 1;
+                startDay.setDate(endDay.getDate() - diff);
+                const pad = (n: number) => n.toString().padStart(2, '0');
+                const endStr = `${startDay.getFullYear()}-${pad(startDay.getMonth() + 1)}-${pad(startDay.getDate())}`;
+                wouldBeEmpty = earliestDate > endStr;
+            } else if (timeRangeDays === 30) {
+                const targetMonth = new Date(today.getFullYear(), today.getMonth() - (timeRangeOffset + 1), 1);
+                const endOfMonth = new Date(targetMonth.getFullYear(), targetMonth.getMonth() + 1, 0);
+                const pad = (n: number) => n.toString().padStart(2, '0');
+                const endStr = `${endOfMonth.getFullYear()}-${pad(endOfMonth.getMonth() + 1)}-${pad(endOfMonth.getDate())}`;
+                wouldBeEmpty = earliestDate > endStr;
+            } else if (timeRangeDays === 365) {
+                const targetYear = today.getFullYear() - (timeRangeOffset + 1);
+                wouldBeEmpty = earliestDate > `${targetYear}-12-31`;
+            }
+            if (wouldBeEmpty) {
+                prevBtn.style.opacity = '0.3';
+                prevBtn.style.cursor = 'default';
+            }
+        }
+
         layout.querySelector('#btn-chart-prev')?.addEventListener('click', () => {
              this.onChartParamChange({ timeRangeOffset: this.state.timeRangeOffset + 1 });
         });
@@ -127,6 +171,9 @@ export class ActivityCharts extends Component<ActivityChartsState> {
         layout.querySelector('#btn-chars-toggle')?.addEventListener('click', () => {
             this.onChartParamChange({ charsGroupByMode: this.state.charsGroupByMode === 'media_type' ? 'log_name' : 'media_type' });
         });
+        layout.querySelector('#btn-bar-metric')?.addEventListener('click', () => {
+            this.onChartParamChange({ barMetric: this.state.barMetric === 'time' ? 'chars' : 'time' });
+        });
     }
 
     private renderCharts(layout: HTMLElement) {
@@ -149,6 +196,8 @@ export class ActivityCharts extends Component<ActivityChartsState> {
         ];
 
         const { logs, timeRangeDays, timeRangeOffset, groupByMode, chartType } = this.state;
+        const barMetric = this.state.barMetric;
+        const isCharsMetric = barMetric === 'chars';
         
         let labels: string[] = [];
         let getBucketIndex: (dateStr: string) => number = () => -1;
@@ -245,6 +294,12 @@ export class ActivityCharts extends Component<ActivityChartsState> {
             }
         });
 
+        // Pie total label
+        let pieTotalMins = 0;
+        pieTypeMap.forEach(v => pieTotalMins += v);
+        const pieTotalEl = layout.querySelector('#pie-total');
+        if (pieTotalEl) pieTotalEl.textContent = `Total: ${formatDuration(pieTotalMins)}`;
+
         // Characters Read By Media Type chart
         const charsTypeMap = new Map<string, number>();
         for (const log of logs) {
@@ -281,6 +336,12 @@ export class ActivityCharts extends Component<ActivityChartsState> {
             }
         });
 
+        // Chars total label
+        let charsTotalCount = 0;
+        charsTypeMap.forEach(v => charsTotalCount += v);
+        const charsTotalEl = layout.querySelector('#chars-total');
+        if (charsTotalEl) charsTotalEl.textContent = `Total: ${charsTotalCount.toLocaleString()} 文字`;
+
         const datasetsMap = new Map<string, number[]>();
         const activeKeysInPeriod = new Set<string>();
         for (const log of logs) {
@@ -295,7 +356,7 @@ export class ActivityCharts extends Component<ActivityChartsState> {
             const index = getBucketIndex(log.date);
             if (index !== -1) {
                 const key = groupByMode === 'media_type' ? log.media_type : log.title;
-                if (datasetsMap.has(key)) datasetsMap.get(key)![index] += log.duration_minutes;
+                if (datasetsMap.has(key)) datasetsMap.get(key)![index] += isCharsMetric ? log.characters_read : log.duration_minutes;
             }
         }
 
@@ -308,6 +369,13 @@ export class ActivityCharts extends Component<ActivityChartsState> {
             tension: 0.3
         }));
 
+        // Compute per-label totals for bar mode
+        const labelTotals = labels.map((_, i) => {
+            let sum = 0;
+            for (const ds of datasets) sum += ds.data[i];
+            return sum;
+        });
+
         this.barChartInstance = new Chart(barCanvas, {
             type: chartType,
             data: {
@@ -317,6 +385,9 @@ export class ActivityCharts extends Component<ActivityChartsState> {
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
+                layout: {
+                    padding: { bottom: chartType === 'bar' ? 28 : 0 }
+                },
                 scales: {
                     x: { stacked: chartType === 'bar', grid: { color: '#3f3f4e' }, ticks: { color: '#a0a0b0' } },
                     y: { 
@@ -325,7 +396,7 @@ export class ActivityCharts extends Component<ActivityChartsState> {
                         ticks: { 
                             color: '#a0a0b0',
                             callback: function(value: any) { 
-                                return formatDuration(value);
+                                return isCharsMetric ? value.toLocaleString() : formatDuration(value);
                             }
                         } 
                     }
@@ -335,12 +406,36 @@ export class ActivityCharts extends Component<ActivityChartsState> {
                     tooltip: {
                         callbacks: {
                             label: function(context: any) {
-                                return `${context.label}: ${formatDuration(context.parsed.y)}`;
+                                const val = context.parsed.y;
+                                return isCharsMetric
+                                    ? `${context.label}: ${val.toLocaleString()} 文字`
+                                    : `${context.label}: ${formatDuration(val)}`;
                             }
                         }
                     }
                 }
-            }
+            },
+            plugins: chartType === 'bar' ? [{
+                id: 'barTotals',
+                afterDraw(chart: any) {
+                    const { ctx } = chart;
+                    const xAxis = chart.scales.x;
+                    const bottomY = chart.chartArea.bottom;
+                    ctx.save();
+                    ctx.font = '11px Inter, sans-serif';
+                    ctx.fillStyle = '#a0a0b0';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'top';
+                    for (let i = 0; i < labelTotals.length; i++) {
+                        if (labelTotals[i] > 0) {
+                            const x = xAxis.getPixelForValue(i);
+                            const text = isCharsMetric ? labelTotals[i].toLocaleString() : formatDuration(labelTotals[i]);
+                            ctx.fillText(text, x, bottomY + 30);
+                        }
+                    }
+                    ctx.restore();
+                }
+            }] : []
         });
     }
 
