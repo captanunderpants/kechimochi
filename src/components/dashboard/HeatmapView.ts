@@ -1,10 +1,11 @@
 import { Component } from '../../core/component';
 import { html } from '../../core/html';
-import { DailyHeatmap, formatDuration } from '../../api';
+import { ActivitySummary, DailyHeatmap, formatDuration } from '../../api';
 
 interface HeatmapViewState {
     heatmapData: DailyHeatmap[];
     year: number;
+    logs: ActivitySummary[];
 }
 
 export class HeatmapView extends Component<HeatmapViewState> {
@@ -88,7 +89,7 @@ export class HeatmapView extends Component<HeatmapViewState> {
                 const lightness = lightBase + (ratio * lightRange);
                 cellStyle = `style="background-color: hsl(${heatmapHue}, ${saturation}%, ${lightness}%);"`;
             }
-            cells.push(`<div class="heatmap-cell" ${cellStyle} title="${dateStr}: ${formatDuration(minutes)}"></div>`);
+            cells.push(`<div class="heatmap-cell" data-date="${dateStr}" ${cellStyle}></div>`);
         }
 
         for (let i = 0; i < cells.length; i += 7) {
@@ -101,5 +102,60 @@ export class HeatmapView extends Component<HeatmapViewState> {
         
         htmlContent += '</div>';
         container.innerHTML = htmlContent;
+
+        // Build date-to-logs map for tooltip
+        const dateLogsMap = new Map<string, Map<string, number>>();
+        for (const log of this.state.logs) {
+            if (!dateLogsMap.has(log.date)) dateLogsMap.set(log.date, new Map());
+            const dayMap = dateLogsMap.get(log.date)!;
+            dayMap.set(log.title, (dayMap.get(log.title) || 0) + log.duration_minutes);
+        }
+
+        const tooltip = HeatmapView.ensureTooltip();
+        let currentCell: HTMLElement | null = null;
+
+        container.addEventListener('mousemove', (e) => {
+            const cell = (e.target as HTMLElement).closest('.heatmap-cell[data-date]') as HTMLElement | null;
+            if (cell === currentCell) return;
+            currentCell = cell;
+            if (!cell) { tooltip.style.display = 'none'; return; }
+
+            const date = cell.getAttribute('data-date')!;
+            const totalMins = dateMap.get(date) || 0;
+            const entries = dateLogsMap.get(date);
+            const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+            let content = `<div class="heatmap-tooltip-date">${esc(date)} \u2014 ${formatDuration(totalMins)}</div>`;
+            if (entries && entries.size > 0) {
+                entries.forEach((mins, title) => {
+                    content += `<div class="heatmap-tooltip-entry"><span class="heatmap-tooltip-title">${esc(title)}</span><span>${formatDuration(mins)}</span></div>`;
+                });
+            } else {
+                content += `<div class="heatmap-tooltip-empty">No activity</div>`;
+            }
+
+            tooltip.innerHTML = content;
+            tooltip.style.display = 'block';
+            const rect = cell.getBoundingClientRect();
+            tooltip.style.left = `${rect.left + rect.width / 2}px`;
+            tooltip.style.top = `${rect.bottom + 8}px`;
+        });
+
+        container.addEventListener('mouseleave', () => {
+            currentCell = null;
+            tooltip.style.display = 'none';
+        });
+    }
+
+    private static heatmapTooltip: HTMLElement | null = null;
+
+    private static ensureTooltip(): HTMLElement {
+        if (!HeatmapView.heatmapTooltip || !document.body.contains(HeatmapView.heatmapTooltip)) {
+            HeatmapView.heatmapTooltip = document.createElement('div');
+            HeatmapView.heatmapTooltip.className = 'heatmap-tooltip';
+            HeatmapView.heatmapTooltip.style.display = 'none';
+            document.body.appendChild(HeatmapView.heatmapTooltip);
+        }
+        return HeatmapView.heatmapTooltip;
     }
 }

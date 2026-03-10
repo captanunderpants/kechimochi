@@ -15,6 +15,8 @@ interface DashboardState {
         timeRangeDays: number;
         timeRangeOffset: number;
         groupByMode: 'media_type' | 'log_name';
+        pieGroupByMode: 'media_type' | 'log_name';
+        charsGroupByMode: 'media_type' | 'log_name';
         chartType: 'bar' | 'line';
     }
 }
@@ -36,7 +38,9 @@ export class Dashboard extends Component<DashboardState> {
             chartParams: {
                 timeRangeDays: 7,
                 timeRangeOffset: 0,
-                groupByMode: 'media_type',
+                groupByMode: 'log_name',
+                pieGroupByMode: 'log_name',
+                charsGroupByMode: 'log_name',
                 chartType: 'bar'
             }
         });
@@ -76,7 +80,7 @@ export class Dashboard extends Component<DashboardState> {
 
         const heatmapContainer = html`<div id="heatmap-container" style="min-width: 0;"></div>`;
         topRow.appendChild(heatmapContainer);
-        new HeatmapView(heatmapContainer, { heatmapData: this.state.heatmapData, year: this.state.currentHeatmapYear }, (dir) => {
+        new HeatmapView(heatmapContainer, { heatmapData: this.state.heatmapData, year: this.state.currentHeatmapYear, logs: this.state.logs }, (dir) => {
             this.setState({ currentHeatmapYear: this.state.currentHeatmapYear + dir });
         }).render();
 

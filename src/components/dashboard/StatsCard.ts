@@ -35,6 +35,7 @@ export class StatsCard extends Component<StatsCardState> {
         const loggedDaysCount = uniqueDates.length || 1;
         const totalAvgMins = totalMins / loggedDaysCount;
         const totalAvgFormat = formatDuration(totalAvgMins);
+        const totalHours = (totalMins / 60).toFixed(1);
 
         if (uniqueDates.length > 0) {
             let streakCount = 1;
@@ -125,6 +126,9 @@ export class StatsCard extends Component<StatsCardState> {
                         </div>
                     </div>
                     
+                    <div style="background: var(--accent-green); padding: 0.6rem; border-radius: var(--radius-sm); text-align: center; color: var(--accent-text); font-weight: 700; font-size: 1.1rem;">
+                        ${totalHours} hours
+                    </div>
                     <div style="background: var(--accent-purple); padding: 0.5rem; border-radius: var(--radius-sm); text-align: center; color: var(--accent-text); font-weight: 600; font-size: 0.85rem;">
                         Total Avg: ${totalAvgFormat} / day
                     </div>
