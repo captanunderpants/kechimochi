@@ -106,7 +106,13 @@ export async function showLogActivityModal(prefill?: { title?: string, contentTy
                     </div>
                     <div id="episodes-container" style="display: ${prefillIsAnime ? 'flex' : 'none'}; flex-direction: column; gap: 0.5rem;">
                         <label style="font-size: 0.85rem; color: var(--text-secondary);">Number of Episodes</label>
-                        <input type="number" id="activity-episodes" min="1" step="1" placeholder="e.g. 3" style="background: var(--bg-dark); color: var(--text-primary); border: 1px solid var(--border-color); padding: 0.5rem; border-radius: var(--radius-sm);" />
+                        <div style="display: flex; align-items: stretch; border: 1px solid var(--border-color); border-radius: var(--radius-sm); overflow: hidden; background: var(--bg-dark);">
+                            <input type="number" id="activity-episodes" min="1" step="1" style="background: transparent; color: var(--text-primary); border: none; padding: 0.5rem; flex: 1; outline: none; appearance: textfield; -moz-appearance: textfield; -webkit-appearance: none; width: 0;" />
+                            <div style="display: flex; flex-direction: column; border-left: 1px solid var(--border-color);">
+                                <button type="button" id="episodes-up" style="background: transparent; border: none; border-bottom: 1px solid var(--border-color); color: var(--text-secondary); cursor: pointer; padding: 0 0.5rem; flex: 1; font-size: 0.6rem; line-height: 1; display: flex; align-items: center; justify-content: center;" aria-label="Increase episodes">&#9650;</button>
+                                <button type="button" id="episodes-down" style="background: transparent; border: none; color: var(--text-secondary); cursor: pointer; padding: 0 0.5rem; flex: 1; font-size: 0.6rem; line-height: 1; display: flex; align-items: center; justify-content: center;" aria-label="Decrease episodes">&#9660;</button>
+                            </div>
+                        </div>
                     </div>
                     <div style="display: flex; flex-direction: column; gap: 0.5rem;">
                         <label style="font-size: 0.85rem; color: var(--text-secondary);">Duration</label>
@@ -153,6 +159,15 @@ export async function showLogActivityModal(prefill?: { title?: string, contentTy
 
         // Show/hide fields based on content type
         contentTypeSelect.addEventListener('change', updateFieldVisibility);
+
+        overlay.querySelector('#episodes-up')!.addEventListener('click', () => {
+            const cur = parseInt(episodesInput.value) || 0;
+            episodesInput.value = String(cur + 1);
+        });
+        overlay.querySelector('#episodes-down')!.addEventListener('click', () => {
+            const cur = parseInt(episodesInput.value) || 0;
+            if (cur > 1) episodesInput.value = String(cur - 1);
+        });
 
         const cleanup = () => {
              overlay.classList.remove('active');

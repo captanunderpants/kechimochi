@@ -562,6 +562,13 @@ input:focus, select:focus {
   animation: fadeIn 0.3s ease-out forwards;
 }
 
+/* Hide native number input spinners */
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
 /* Modals */
 .modal-overlay {
   position: fixed;
