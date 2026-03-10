@@ -209,10 +209,6 @@ All data is stored locally in SQLite databases in your system's application data
 
 Each profile has its own database file named `kechimochi_<profilename>.db`.
 
-## License
-
-This project is provided as-is with no warranty. See the warning at the top of this document.
-
 ## Changes from Main (10/3/26)
 
 ### Media Classification Rework
@@ -287,3 +283,7 @@ Each media entry's detail page displays curated statistics in a row: total chara
 ### Total Statistics on Dashboard
 
 A total characters read and total lifetime hours label have been displayed in the stats card on the dashboard.
+
+## License
+
+This project is provided as-is with no warranty. See the warning at the top of this document.
