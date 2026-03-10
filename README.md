@@ -210,7 +210,7 @@ All data is stored locally in SQLite databases in your system's application data
 
 Each profile has its own database file named `kechimochi_<profilename>.db`.
 
-## Changes from Main (10/3/26)
+## Changes from Main (9/3/26)
 
 ### Media Classification Rework
 
