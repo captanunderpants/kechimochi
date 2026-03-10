@@ -185,9 +185,10 @@ For importing data, use the following CSV format:
 
 ```csv
 Date,Log Name,Media Type,Characters Read,Duration
-2024-01-15,ある魔女が死ぬまで,Reading,15000,45
-2024-01-15,Final Fantasy 7,Playing,,120
-2024-01-16,呪術廻戦,Listening,,25
+2026-03-02,竜殺しのブリュンヒルド,Light Novel,"1,156",0:04:28
+2026-03-06,魔法少女ノ魔女裁判,Visual Novel,"52,924",3:24:06
+2026-03-07,魔法少女ノ魔女裁判,Visual Novel,"163,539",10:00:00
+2026-03-08,魔法少女ノ魔女裁判,Visual Novel,"138,446",8:00:00
 ```
 
 | Column            | Description                                                                                                                      |
