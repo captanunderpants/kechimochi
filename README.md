@@ -268,7 +268,7 @@ Media entries can be marked as NSFW. Toggling NSFW blurs the cover art in both t
 
 ### Hidden Entries
 
-Media entries can be hidden from the library grid via a right-click context menu. Entries are also automatically hidden if they have no cover art and their status is not Ongoing. Hidden entries can be viewed in a collapsible section at the bottom of the library.
+Media entries can be hidden from the library grid via a right-click context menu. Entries are also automatically hidden if they have no cover art and their status is not Ongoing (this is to avoid automatically hiding media entries on Activity Log Import). Hidden entries can be viewed in a collapsible section at the bottom of the library.
 
 ### Library Sort and Filter
 
