@@ -185,6 +185,7 @@ For importing data, use the following CSV format:
 
 ```csv
 Date,Log Name,Media Type,Characters Read,Duration
+2026-03-01,ハコラジ,Podcast,,0:22:06
 2026-03-02,竜殺しのブリュンヒルド,Light Novel,"1,156",0:04:28
 2026-03-06,魔法少女ノ魔女裁判,Visual Novel,"52,924",3:24:06
 2026-03-07,魔法少女ノ魔女裁判,Visual Novel,"163,539",10:00:00
