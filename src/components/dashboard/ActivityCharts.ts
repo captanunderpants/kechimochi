@@ -493,7 +493,7 @@ export class ActivityCharts extends Component<ActivityChartsState> {
                     tension: 0.3,
                     pointRadius: sortedDates.length > 60 ? 0 : 2,
                     pointHitRadius: 20,
-                    hoverRadius: 6
+                    pointHoverRadius: 6
                 }]
             },
             options: {
@@ -502,6 +502,9 @@ export class ActivityCharts extends Component<ActivityChartsState> {
                 scales: {
                     x: { grid: { color: '#3f3f4e' }, ticks: { color: '#a0a0b0', maxTicksLimit: 12 } },
                     y: { grid: { color: '#3f3f4e' }, ticks: { color: '#a0a0b0', callback: (v: any) => `${v}h` } }
+                },
+                elements: {
+                    point: { hoverRadius: 6 }
                 },
                 plugins: {
                     legend: { display: false },
