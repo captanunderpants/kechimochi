@@ -491,7 +491,9 @@ export class ActivityCharts extends Component<ActivityChartsState> {
                     backgroundColor: colors[0] + '33',
                     fill: true,
                     tension: 0.3,
-                    pointRadius: sortedDates.length > 60 ? 0 : 2
+                    pointRadius: sortedDates.length > 60 ? 0 : 2,
+                    pointHitRadius: 20,
+                    hoverRadius: 6
                 }]
             },
             options: {
