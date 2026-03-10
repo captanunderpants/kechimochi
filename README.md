@@ -212,12 +212,73 @@ Each profile has its own database file named `kechimochi_<profilename>.db`.
 
 This project is provided as-is with no warranty. See the warning at the top of this document.
 
-## Changelog
+## Changes from Main
 
-### 2026-03-10
+### Media Classification Rework
 
-- **Sort UI redesign**: Replaced individual ascending/descending sort options (e.g. "Time ↓", "Time ↑") with a single sort dropdown plus a ↑/↓ toggle button that controls direction for all sort types.
-- **Finished Date sort**: Added a new "Finished" sort option that orders entries by their last activity date.
-- **Last activity date tracking**: Added `last_activity_date` field to the Media model, populated from the most recent activity log entry via SQL.
-- **Removed Reading Report Card**: Removed the report card feature from the Profile page (state, UI, calculation logic, and settings storage).
-- **Default sort fix**: Fixed default "Recent" sort to correctly show most recently updated entries first (descending).
+Media entries are now classified by specific media types instead of broad categories like Reading or Watching. Each media type maps to an internal activity classification:
+
+| Media Type   | Classification |
+| ------------ | -------------- |
+| Anime        | Listening      |
+| Manga        | Reading        |
+| Light Novel  | Reading        |
+| Visual Novel | Reading        |
+| Book         | Reading        |
+| Audiobook    | Listening      |
+| Podcast      | Listening      |
+| JDrama       | Listening      |
+| Youtube      | Listening      |
+| JRPG         | Playing        |
+
+### Character Count Metrics
+
+Activity log imports now accept a character count field. Character metrics are stored per media entry and displayed in the media detail stats row, including total characters read and reading speed (文字/hour).
+
+### Time Format
+
+Durations are now accepted in `HH:MM:SS`, `MM:SS`, or plain minutes. The `parseDuration()` function handles the conversion internally, and all times are displayed in `HH:MM:SS` format via `formatDuration()`.
+
+### Language Field Removed
+
+The language selector has been removed from the activity log modal. All entries default to 日本語.
+
+### New Dashboard Graphs
+
+Three additional charts appear below the existing graphs:
+
+- **Cumulative Hours** — An area chart showing total hours accumulated over time.
+- **Activity by Day of Week** — A radar chart displaying minutes logged per weekday for the current week.
+- **Reading Speed Over Time** — A line chart plotting weekly average 文字/hour with detailed tooltips (sessions, total characters, total time, speed range).
+
+### Heatmap Tooltips
+
+Hovering over a box in the tracking heatmap displays a tooltip listing all media entries logged on that day with their individual durations.
+
+### Chart Interaction Improvements
+
+- The Activity Breakdown and Characters Read doughnut charts each have a toggle button to switch between grouping by media type and by individual media entry.
+- The chart type, time range, and grouping dropdowns on the Activity Visualization chart have been replaced with cycling buttons that rotate through options on click.
+
+### NSFW Blur
+
+Media entries can be marked as NSFW. Toggling NSFW blurs the cover art in both the library grid and the media detail page. In the library grid, hovering temporarily reveals the image. In the media detail page, right-clicking the cover toggles the blur.
+
+### Hidden Entries
+
+Media entries can be hidden from the library grid via a right-click context menu. Entries are also automatically hidden if they have no cover art and their status is not Ongoing. Hidden entries can be viewed in a collapsible section at the bottom of the library.
+
+### Library Sort and Filter
+
+The library view now includes sort and filter controls:
+
+- **Sort by**: Recent, Title, Time, Characters Read, Reading Speed, or Finished Date (ascending/descending).
+- **Filter by**: Media type, status, or immersion category (Reading/Listening/Playing).
+
+### Media Detail Stats Row
+
+Each media entry's detail page displays computed statistics: total characters read, total time, reading speed (文字/hour), and first/last activity dates.
+
+### Total Hours on Dashboard
+
+A total lifetime hours label is displayed in the stats card on the dashboard.
