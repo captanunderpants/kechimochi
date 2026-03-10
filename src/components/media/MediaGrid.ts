@@ -21,6 +21,7 @@ export class MediaGrid extends Component<MediaGridState> {
     private isDestroyed: boolean = false;
     private currentRenderId: number = 0;
     private headerRendered: boolean = false;
+    private searchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
     constructor(container: HTMLElement, initialState: MediaGridState, onMediaClick: (mediaId: number) => void, onDataChange: (jumpToId?: number) => Promise<void>, onFilterChange?: (filters: any) => void) {
         super(container, initialState);
@@ -135,8 +136,11 @@ export class MediaGrid extends Component<MediaGridState> {
 
         header.querySelector('#grid-search-filter')?.addEventListener('input', (e) => {
             this.state.searchQuery = (e.target as HTMLInputElement).value;
-            this.refreshGrid();
-            this.notifyFilterChange();
+            if (this.searchDebounceTimer !== null) clearTimeout(this.searchDebounceTimer);
+            this.searchDebounceTimer = setTimeout(() => {
+                this.refreshGrid();
+                this.notifyFilterChange();
+            }, 150);
         });
 
         header.querySelector('#grid-immersion-select')?.addEventListener('change', (e) => {

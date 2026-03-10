@@ -123,6 +123,10 @@ export async function getLogs(): Promise<ActivitySummary[]> {
   return await invoke('get_logs');
 }
 
+export async function getRecentLogs(limit: number): Promise<ActivitySummary[]> {
+  return await invoke('get_recent_logs', { limit });
+}
+
 export async function getHeatmap(): Promise<DailyHeatmap[]> {
   return await invoke('get_heatmap');
 }

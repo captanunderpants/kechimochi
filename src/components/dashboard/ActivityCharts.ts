@@ -278,12 +278,26 @@ export class ActivityCharts extends Component<ActivityChartsState> {
             };
         }
 
+        // Single pass over logs: build pieTypeMap, charsTypeMap, and datasetsMap simultaneously
         const { pieGroupByMode, charsGroupByMode } = this.state;
         const pieTypeMap = new Map<string, number>();
+        const charsTypeMap = new Map<string, number>();
+        const datasetsMap = new Map<string, number[]>();
         for (const log of logs) {
-            if (log.date >= validStart && log.date <= validEnd) {
-                const key = pieGroupByMode === 'media_type' ? log.media_type : log.title;
-                pieTypeMap.set(key, (pieTypeMap.get(key) || 0) + log.duration_minutes);
+            const inRange = log.date >= validStart && log.date <= validEnd;
+            if (inRange) {
+                const pieKey = pieGroupByMode === 'media_type' ? log.media_type : log.title;
+                pieTypeMap.set(pieKey, (pieTypeMap.get(pieKey) || 0) + log.duration_minutes);
+                if (log.characters_read > 0 && isReadingContentType(log.content_type)) {
+                    const charsKey = charsGroupByMode === 'media_type' ? log.content_type : log.title;
+                    charsTypeMap.set(charsKey, (charsTypeMap.get(charsKey) || 0) + log.characters_read);
+                }
+            }
+            const bucketIndex = getBucketIndex(log.date);
+            if (bucketIndex !== -1) {
+                const barKey = groupByMode === 'media_type' ? log.media_type : log.title;
+                if (!datasetsMap.has(barKey)) datasetsMap.set(barKey, Array(labels.length).fill(0));
+                datasetsMap.get(barKey)![bucketIndex] += isCharsMetric ? log.characters_read : log.duration_minutes;
             }
         }
 
@@ -320,14 +334,6 @@ export class ActivityCharts extends Component<ActivityChartsState> {
         if (pieTotalEl) pieTotalEl.textContent = `Total: ${formatDuration(pieTotalMins)}`;
 
         // Characters Read By Media Type chart
-        const charsTypeMap = new Map<string, number>();
-        for (const log of logs) {
-            if (log.date >= validStart && log.date <= validEnd && log.characters_read > 0 && isReadingContentType(log.content_type)) {
-                const charsKey = charsGroupByMode === 'media_type' ? log.content_type : log.title;
-                charsTypeMap.set(charsKey, (charsTypeMap.get(charsKey) || 0) + log.characters_read);
-            }
-        }
-
         this.charsChartInstance = new Chart(charsCanvas, {
             type: 'doughnut',
             data: {
@@ -360,24 +366,6 @@ export class ActivityCharts extends Component<ActivityChartsState> {
         charsTypeMap.forEach(v => charsTotalCount += v);
         const charsTotalEl = layout.querySelector('#chars-total');
         if (charsTotalEl) charsTotalEl.textContent = `Total: ${charsTotalCount.toLocaleString()} 文字`;
-
-        const datasetsMap = new Map<string, number[]>();
-        const activeKeysInPeriod = new Set<string>();
-        for (const log of logs) {
-            if (getBucketIndex(log.date) !== -1) {
-                const key = groupByMode === 'media_type' ? log.media_type : log.title;
-                activeKeysInPeriod.add(key);
-            }
-        }
-        for (const key of activeKeysInPeriod) datasetsMap.set(key, Array(labels.length).fill(0));
-
-        for (const log of logs) {
-            const index = getBucketIndex(log.date);
-            if (index !== -1) {
-                const key = groupByMode === 'media_type' ? log.media_type : log.title;
-                if (datasetsMap.has(key)) datasetsMap.get(key)![index] += isCharsMetric ? log.characters_read : log.duration_minutes;
-            }
-        }
 
         const datasets = Array.from(datasetsMap.entries()).map(([key, data], i) => ({
             label: key,

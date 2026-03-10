@@ -62,6 +62,12 @@ fn get_logs(state: State<DbState>) -> Result<Vec<ActivitySummary>, String> {
 }
 
 #[tauri::command]
+fn get_recent_logs(state: State<DbState>, limit: i64) -> Result<Vec<ActivitySummary>, String> {
+    let conn = state.conn.lock().unwrap();
+    db::get_recent_logs(&conn, limit).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 fn get_heatmap(state: State<DbState>) -> Result<Vec<DailyHeatmap>, String> {
     let conn = state.conn.lock().unwrap();
     db::get_heatmap(&conn).map_err(|e| e.to_string())
@@ -382,6 +388,7 @@ pub fn run() {
             delete_log,
             update_log,
             get_logs,
+            get_recent_logs,
             get_heatmap,
             import_csv,
             export_csv,

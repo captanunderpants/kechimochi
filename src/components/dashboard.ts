@@ -25,9 +25,47 @@ interface DashboardState {
 export class Dashboard extends Component<DashboardState> {
     private activeChartsComponent: ActivityCharts | null = null;
     private loaded: boolean = false;
+    private chartsContainerEl: HTMLElement | null = null;
+    private heatmapContainerEl: HTMLElement | null = null;
 
     public resetLoaded() {
         this.loaded = false;
+    }
+
+    public setState(newState: Partial<DashboardState>): void {
+        this.state = { ...this.state, ...newState };
+        const keys = Object.keys(newState) as (keyof DashboardState)[];
+        const onlyChartParams = keys.length > 0 && keys.every(k => k === 'chartParams');
+        const onlyHeatmapYear = keys.length > 0 && keys.every(k => k === 'currentHeatmapYear');
+        if (onlyChartParams && this.chartsContainerEl) {
+            this.rerenderCharts();
+        } else if (onlyHeatmapYear && this.heatmapContainerEl) {
+            this.rerenderHeatmap();
+        } else {
+            this.render();
+        }
+    }
+
+    private rerenderCharts(): void {
+        if (!this.chartsContainerEl) return;
+        if (this.activeChartsComponent) this.activeChartsComponent.destroy?.();
+        this.chartsContainerEl.innerHTML = '';
+        this.activeChartsComponent = new ActivityCharts(
+            this.chartsContainerEl,
+            { logs: this.state.logs, ...this.state.chartParams },
+            (newParams) => {
+                this.setState({ chartParams: { ...this.state.chartParams, ...newParams } });
+            }
+        );
+        this.activeChartsComponent.render();
+    }
+
+    private rerenderHeatmap(): void {
+        if (!this.heatmapContainerEl) return;
+        this.heatmapContainerEl.innerHTML = '';
+        new HeatmapView(this.heatmapContainerEl, { heatmapData: this.state.heatmapData, year: this.state.currentHeatmapYear, logs: this.state.logs }, (dir) => {
+            this.setState({ currentHeatmapYear: this.state.currentHeatmapYear + dir });
+        }).render();
     }
 
     constructor(container: HTMLElement) {
@@ -82,23 +120,14 @@ export class Dashboard extends Component<DashboardState> {
 
         const heatmapContainer = html`<div id="heatmap-container" style="min-width: 0;"></div>`;
         topRow.appendChild(heatmapContainer);
-        new HeatmapView(heatmapContainer, { heatmapData: this.state.heatmapData, year: this.state.currentHeatmapYear, logs: this.state.logs }, (dir) => {
-            this.setState({ currentHeatmapYear: this.state.currentHeatmapYear + dir });
-        }).render();
+        this.heatmapContainerEl = heatmapContainer;
+        this.rerenderHeatmap();
 
         // 2. Charts Row
         const chartsContainer = html`<div id="charts-container"></div>`;
         root.appendChild(chartsContainer);
-        
-        if (this.activeChartsComponent) this.activeChartsComponent.destroy();
-        this.activeChartsComponent = new ActivityCharts(
-            chartsContainer,
-            { logs: this.state.logs, ...this.state.chartParams },
-            (newParams) => {
-                this.setState({ chartParams: { ...this.state.chartParams, ...newParams } });
-            }
-        );
-        this.activeChartsComponent.render();
+        this.chartsContainerEl = chartsContainer;
+        this.rerenderCharts();
 
         // 3. Recent Logs Row
         const logsCard = html`

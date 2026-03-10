@@ -84,6 +84,12 @@ fn create_activity_logs_table(conn: &Connection) -> Result<()> {
         [],
     )?;
     let _ = conn.execute("ALTER TABLE main.activity_logs ADD COLUMN characters_read INTEGER DEFAULT 0", []);
+    // Indexes for fast aggregation and join on media_id, and date-range queries
+    conn.execute_batch("
+        CREATE INDEX IF NOT EXISTS main.idx_logs_media_id ON activity_logs(media_id);
+        CREATE INDEX IF NOT EXISTS main.idx_logs_date ON activity_logs(date);
+        CREATE INDEX IF NOT EXISTS main.idx_logs_media_date ON activity_logs(media_id, date);
+    ")?;
     Ok(())
 }
 
@@ -133,7 +139,16 @@ pub fn init_db(app_handle: &tauri::AppHandle, profile_name: &str) -> Result<Conn
     let db_path = app_dir.join(file_name);
 
     let conn = Connection::open(db_path)?;
-    
+
+    // Performance tuning: WAL mode, larger cache, memory temp store
+    conn.execute_batch("
+        PRAGMA journal_mode=WAL;
+        PRAGMA synchronous=NORMAL;
+        PRAGMA cache_size=-16000;
+        PRAGMA temp_store=MEMORY;
+        PRAGMA mmap_size=134217728;
+    ")?;
+
     // Attach shared database
     conn.execute(
         "ATTACH DATABASE ?1 AS shared",
@@ -190,15 +205,24 @@ pub fn list_profiles(app_handle: &tauri::AppHandle) -> std::result::Result<Vec<S
 
 // Media Operations
 pub fn get_all_media(conn: &Connection) -> Result<Vec<Media>> {
+    // Single aggregation JOIN instead of 4 correlated subqueries per row
     let mut stmt = conn.prepare(
         "SELECT m.id, m.title, m.media_type, m.status, m.language, m.description, m.cover_image, m.extra_data, m.content_type, m.tracking_status, m.nsfw, m.hidden,
-                COALESCE((SELECT SUM(a.duration_minutes) FROM main.activity_logs a WHERE a.media_id = m.id), 0),
-                COALESCE((SELECT SUM(a.characters_read) FROM main.activity_logs a WHERE a.media_id = m.id), 0),
-                COALESCE((SELECT MAX(a.date) FROM main.activity_logs a WHERE a.media_id = m.id), '')
+                COALESCE(a.total_time, 0),
+                COALESCE(a.total_chars, 0),
+                COALESCE(a.last_date, '')
          FROM shared.media m
+         LEFT JOIN (
+             SELECT media_id,
+                    SUM(duration_minutes) AS total_time,
+                    SUM(characters_read)  AS total_chars,
+                    MAX(date)             AS last_date
+             FROM main.activity_logs
+             GROUP BY media_id
+         ) a ON a.media_id = m.id
          ORDER BY 
             CASE WHEN m.status NOT IN ('Archived', 'Inactive', 'Finished', 'Completed') THEN 0 ELSE 1 END,
-            (SELECT MAX(date) FROM main.activity_logs WHERE media_id = m.id) DESC,
+            COALESCE(a.last_date, '') DESC,
             m.id DESC"
     )?;
     let media_iter = stmt.query_map([], |row| {
@@ -301,6 +325,35 @@ pub fn update_log(conn: &Connection, id: i64, duration_minutes: f64, characters_
 pub fn clear_activities(conn: &Connection) -> Result<()> {
     conn.execute("DELETE FROM main.activity_logs", [])?;
     Ok(())
+}
+
+pub fn get_recent_logs(conn: &Connection, limit: i64) -> Result<Vec<ActivitySummary>> {
+    let mut stmt = conn.prepare(
+        "SELECT a.id, a.media_id, m.title, m.media_type, m.content_type, a.duration_minutes, COALESCE(a.characters_read, 0), a.date, m.language 
+         FROM main.activity_logs a 
+         JOIN shared.media m ON a.media_id = m.id
+         ORDER BY a.date DESC, a.id DESC
+         LIMIT ?1",
+    )?;
+    let logs_iter = stmt.query_map(params![limit], |row| {
+        Ok(ActivitySummary {
+            id: row.get(0)?,
+            media_id: row.get(1)?,
+            title: row.get(2)?,
+            media_type: row.get(3)?,
+            content_type: row.get(4)?,
+            duration_minutes: row.get(5)?,
+            characters_read: row.get(6)?,
+            date: row.get(7)?,
+            language: row.get(8)?,
+        })
+    })?;
+
+    let mut log_list = Vec::new();
+    for log in logs_iter {
+        log_list.push(log?);
+    }
+    Ok(log_list)
 }
 
 pub fn get_logs(conn: &Connection) -> Result<Vec<ActivitySummary>> {
@@ -596,4 +649,113 @@ mod tests {
         assert_eq!(heatmap[1].date, "2024-06-02");
         assert_eq!(heatmap[1].total_minutes, 20.0);
     }
+
+    #[test]
+    fn test_bulk_insert_500_logs() {
+        let conn = setup_test_db();
+
+        // Create 50 media entries
+        let media_ids: Vec<i64> = (0..50)
+            .map(|i| {
+                add_media_with_id(
+                    &conn,
+                    &Media {
+                        id: None,
+                        title: format!("Media {}", i),
+                        media_type: "Reading".to_string(),
+                        status: "Active".to_string(),
+                        language: "日本語".to_string(),
+                        description: String::new(),
+                        cover_image: String::new(),
+                        extra_data: "{}".to_string(),
+                        content_type: "Novel".to_string(),
+                        tracking_status: "Untracked".to_string(),
+                        nsfw: false,
+                        hidden: false,
+                        total_time_logged: 0.0,
+                        total_characters_read: 0,
+                        last_activity_date: String::new(),
+                    },
+                )
+                .expect("add_media_with_id failed")
+            })
+            .collect();
+
+        // Insert 10 logs per media = 500 total
+        let base_date = chrono::NaiveDate::from_ymd_opt(2024, 1, 1).unwrap();
+        for (i, &media_id) in media_ids.iter().enumerate() {
+            for j in 0..10 {
+                let days_offset = (i * 10 + j) as i64 % 365;
+                let date = base_date + chrono::Duration::days(days_offset);
+                add_log(
+                    &conn,
+                    &ActivityLog {
+                        id: None,
+                        media_id,
+                        duration_minutes: 30.0 + (j as f64),
+                        characters_read: 100 * (j as i64 + 1),
+                        date: date.format("%Y-%m-%d").to_string(),
+                    },
+                )
+                .expect("add_log failed");
+            }
+        }
+
+        let logs = get_logs(&conn).unwrap();
+        assert_eq!(logs.len(), 500, "Expected 500 logs, got {}", logs.len());
+    }
+
+    #[test]
+    fn test_get_all_media_aggregation() {
+        let conn = setup_test_db();
+        let media_id = add_media_with_id(&conn, &sample_media("アグリゲーション")).unwrap();
+
+        add_log(&conn, &ActivityLog { id: None, media_id, duration_minutes: 30.0, characters_read: 1000, date: "2024-02-10".to_string() }).unwrap();
+        add_log(&conn, &ActivityLog { id: None, media_id, duration_minutes: 45.5, characters_read: 500,  date: "2024-02-20".to_string() }).unwrap();
+
+        let media_list = get_all_media(&conn).unwrap();
+        assert_eq!(media_list.len(), 1);
+        let m = &media_list[0];
+        assert_eq!(m.total_time_logged, 75.5, "total_time_logged mismatch");
+        assert_eq!(m.total_characters_read, 1500, "total_characters_read mismatch");
+        assert_eq!(m.last_activity_date, "2024-02-20", "last_activity_date mismatch");
+    }
+
+    #[test]
+    fn test_get_recent_logs_limit() {
+        let conn = setup_test_db();
+        let media_id = add_media_with_id(&conn, &sample_media("リミットテスト")).unwrap();
+
+        for i in 1..=30i64 {
+            add_log(&conn, &ActivityLog {
+                id: None,
+                media_id,
+                duration_minutes: i as f64,
+                characters_read: 0,
+                date: format!("2024-03-{:02}", i),
+            }).unwrap();
+        }
+
+        let recent = get_recent_logs(&conn, 10).unwrap();
+        assert_eq!(recent.len(), 10, "Expected 10 logs, got {}", recent.len());
+        // Most recent first
+        assert_eq!(recent[0].date, "2024-03-30");
+        assert_eq!(recent[9].date, "2024-03-21");
+    }
+
+    #[test]
+    fn test_indexes_exist() {
+        let conn = setup_test_db();
+        let index_names: Vec<String> = conn
+            .prepare("SELECT name FROM main.sqlite_master WHERE type='index' AND name LIKE 'idx_logs_%'")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .filter_map(|r| r.ok())
+            .collect();
+        assert!(index_names.contains(&"idx_logs_media_id".to_string()), "Missing idx_logs_media_id");
+        assert!(index_names.contains(&"idx_logs_date".to_string()), "Missing idx_logs_date");
+        assert!(index_names.contains(&"idx_logs_media_date".to_string()), "Missing idx_logs_media_date");
+    }
 }
+
