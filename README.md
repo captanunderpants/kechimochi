@@ -234,7 +234,7 @@ Media entries are now classified by specific media types instead of broad catego
 
 ### Character Count Metrics
 
-Activity log imports now accept a character count field. Character metrics are stored per media entry and displayed in the media detail stats row, including total characters read and reading speed (文字/hour).
+Activity log imports now accept a character count field. Character metrics are stored per media entry and displayed in the graphs and media detail stats row, including total characters read and reading speed (文字/hour).
 
 ### Time Format
 
