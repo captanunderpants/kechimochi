@@ -15,7 +15,7 @@ pub struct Media {
     pub nsfw: bool,
     pub hidden: bool,
     #[serde(default)]
-    pub total_time_logged: i64,
+    pub total_time_logged: f64,
     #[serde(default)]
     pub total_characters_read: i64,
     #[serde(default)]
@@ -26,7 +26,7 @@ pub struct Media {
 pub struct ActivityLog {
     pub id: Option<i64>,
     pub media_id: i64,
-    pub duration_minutes: i64,
+    pub duration_minutes: f64,
     pub characters_read: i64,
     pub date: String, // YYYY-MM-DD
 }
@@ -38,7 +38,7 @@ pub struct ActivitySummary {
     pub title: String,
     pub media_type: String,
     pub content_type: String,
-    pub duration_minutes: i64,
+    pub duration_minutes: f64,
     pub characters_read: i64,
     pub date: String,
     pub language: String,
@@ -47,5 +47,5 @@ pub struct ActivitySummary {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct DailyHeatmap {
     pub date: String,
-    pub total_minutes: i64,
+    pub total_minutes: f64,
 }

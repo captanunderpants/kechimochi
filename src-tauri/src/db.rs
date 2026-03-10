@@ -77,7 +77,7 @@ fn create_activity_logs_table(conn: &Connection) -> Result<()> {
         "CREATE TABLE IF NOT EXISTS main.activity_logs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             media_id INTEGER NOT NULL,
-            duration_minutes INTEGER NOT NULL,
+            duration_minutes REAL NOT NULL,
             characters_read INTEGER NOT NULL DEFAULT 0,
             date TEXT NOT NULL
         )",
@@ -215,7 +215,7 @@ pub fn get_all_media(conn: &Connection) -> Result<Vec<Media>> {
             tracking_status: row.get(9).unwrap_or_else(|_| "Untracked".to_string()),
             nsfw: row.get::<_, i64>(10).unwrap_or(0) != 0,
             hidden: row.get::<_, i64>(11).unwrap_or(0) != 0,
-            total_time_logged: row.get(12).unwrap_or(0),
+            total_time_logged: row.get(12).unwrap_or(0.0),
             total_characters_read: row.get(13).unwrap_or(0),
             last_activity_date: row.get(14).unwrap_or_default(),
         })
@@ -418,7 +418,7 @@ mod tests {
             tracking_status: "Untracked".to_string(),
             nsfw: false,
             hidden: false,
-            total_time_logged: 0,
+            total_time_logged: 0.0,
             total_characters_read: 0,
             last_activity_date: String::new(),
         }
@@ -487,7 +487,7 @@ mod tests {
             tracking_status: "Untracked".to_string(),
             nsfw: false,
             hidden: false,
-            total_time_logged: 0,
+            total_time_logged: 0.0,
             total_characters_read: 0,
             last_activity_date: String::new(),
         };
@@ -507,7 +507,7 @@ mod tests {
         let log = ActivityLog {
             id: None,
             media_id,
-            duration_minutes: 60,
+            duration_minutes: 60.0,
             characters_read: 0,
             date: "2024-01-15".to_string(),
         };
@@ -536,7 +536,7 @@ mod tests {
         let log = ActivityLog {
             id: None,
             media_id,
-            duration_minutes: 45,
+            duration_minutes: 45.0,
             characters_read: 0,
             date: "2024-03-01".to_string(),
         };
@@ -546,7 +546,7 @@ mod tests {
         let logs = get_logs(&conn).unwrap();
         assert_eq!(logs.len(), 1);
         assert_eq!(logs[0].title, "本好きの下剋上");
-        assert_eq!(logs[0].duration_minutes, 45);
+        assert_eq!(logs[0].duration_minutes, 45.0);
         assert_eq!(logs[0].date, "2024-03-01");
     }
 
@@ -560,14 +560,14 @@ mod tests {
         add_log(&conn, &ActivityLog {
             id: None,
             media_id,
-            duration_minutes: 30,
+            duration_minutes: 30.0,
             characters_read: 0,
             date: "2024-06-01".to_string(),
         }).unwrap();
         add_log(&conn, &ActivityLog {
             id: None,
             media_id,
-            duration_minutes: 45,
+            duration_minutes: 45.0,
             characters_read: 0,
             date: "2024-06-01".to_string(),
         }).unwrap();
@@ -576,7 +576,7 @@ mod tests {
         add_log(&conn, &ActivityLog {
             id: None,
             media_id,
-            duration_minutes: 20,
+            duration_minutes: 20.0,
             characters_read: 0,
             date: "2024-06-02".to_string(),
         }).unwrap();
@@ -584,8 +584,8 @@ mod tests {
         let heatmap = get_heatmap(&conn).unwrap();
         assert_eq!(heatmap.len(), 2);
         assert_eq!(heatmap[0].date, "2024-06-01");
-        assert_eq!(heatmap[0].total_minutes, 75); // 30 + 45
+        assert_eq!(heatmap[0].total_minutes, 75.0); // 30 + 45
         assert_eq!(heatmap[1].date, "2024-06-02");
-        assert_eq!(heatmap[1].total_minutes, 20);
+        assert_eq!(heatmap[1].total_minutes, 20.0);
     }
 }

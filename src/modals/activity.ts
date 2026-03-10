@@ -150,7 +150,7 @@ export async function showLogActivityModal(): Promise<boolean> {
             const duration = parseDuration(durationRaw);
             const selectedContentType = contentTypeSelect.value;
             if (!mediaTitle || isNaN(duration) || duration <= 0 || !selectedContentType) return;
-            const durationMinutes = Math.round(duration);
+            const durationMinutes = duration;
 
             const isReading = isReadingContentType(selectedContentType);
             const charactersRead = isReading ? parseInt((overlay.querySelector('#activity-characters-read') as HTMLInputElement).value) || 0 : 0;

@@ -57,14 +57,14 @@ export class ActivityCharts extends Component<ActivityChartsState> {
                 <div class="card" style="display: flex; flex-direction: column; min-width: 0;">
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
                         <div style="display: flex; align-items: center; gap: 0.5rem;">
-                            <button class="btn btn-ghost" style="padding: 0.1rem 0.4rem;" id="btn-chart-prev">&lt;</button>
+                            <button class="btn btn-ghost" style="padding: 0.1rem 0.4rem; ${this.state.timeRangeDays === 0 ? 'opacity: 0.3; cursor: default;' : ''}" id="btn-chart-prev">&lt;</button>
                             <h3 style="margin: 0;">Activity visualization</h3>
-                            <button class="btn btn-ghost" style="padding: 0.1rem 0.4rem; ${this.state.timeRangeOffset === 0 ? 'opacity: 0.3; cursor: default;' : ''}" id="btn-chart-next">&gt;</button>
+                            <button class="btn btn-ghost" style="padding: 0.1rem 0.4rem; ${this.state.timeRangeOffset === 0 || this.state.timeRangeDays === 0 ? 'opacity: 0.3; cursor: default;' : ''}" id="btn-chart-next">&gt;</button>
                         </div>
                         <div style="display: flex; gap: 0.5rem;">
                             <button class="btn btn-ghost btn-cycle" id="btn-bar-metric" style="font-size: 0.8rem; padding: 0.3rem 0.6rem;">${this.state.barMetric === 'time' ? 'Time' : '文字'}</button>
                             <button class="btn btn-ghost btn-cycle" id="btn-chart-type" style="font-size: 0.8rem; padding: 0.3rem 0.6rem;">${this.state.chartType === 'bar' ? 'Bar' : 'Line'}</button>
-                            <button class="btn btn-ghost btn-cycle" id="btn-time-range" style="font-size: 0.8rem; padding: 0.3rem 0.6rem;">${this.state.timeRangeDays === 7 ? 'Weekly' : this.state.timeRangeDays === 30 ? 'Monthly' : 'Yearly'}</button>
+                            <button class="btn btn-ghost btn-cycle" id="btn-time-range" style="font-size: 0.8rem; padding: 0.3rem 0.6rem;">${this.state.timeRangeDays === 7 ? 'Weekly' : this.state.timeRangeDays === 30 ? 'Monthly' : this.state.timeRangeDays === 365 ? 'Yearly' : 'All Time'}</button>
                             <button class="btn btn-ghost btn-cycle" id="btn-group-by" style="font-size: 0.8rem; padding: 0.3rem 0.6rem;">${this.state.groupByMode === 'media_type' ? 'By Type' : 'By Media'}</button>
                         </div>
                     </div>
@@ -121,7 +121,10 @@ export class ActivityCharts extends Component<ActivityChartsState> {
         if (prevBtn && earliestDate) {
             const today = new Date();
             let wouldBeEmpty = false;
-            if (timeRangeDays === 7) {
+            if (timeRangeDays === 0) {
+                // All Time: no navigation
+                wouldBeEmpty = true;
+            } else if (timeRangeDays === 7) {
                 const endDay = new Date(today);
                 endDay.setDate(today.getDate() - (7 * (timeRangeOffset + 1)));
                 const startDay = new Date(endDay);
@@ -148,10 +151,12 @@ export class ActivityCharts extends Component<ActivityChartsState> {
         }
 
         layout.querySelector('#btn-chart-prev')?.addEventListener('click', () => {
-             this.onChartParamChange({ timeRangeOffset: this.state.timeRangeOffset + 1 });
+            if (this.state.timeRangeDays !== 0) {
+                this.onChartParamChange({ timeRangeOffset: this.state.timeRangeOffset + 1 });
+            }
         });
         layout.querySelector('#btn-chart-next')?.addEventListener('click', () => {
-            if (this.state.timeRangeOffset > 0) {
+            if (this.state.timeRangeOffset > 0 && this.state.timeRangeDays !== 0) {
                 this.onChartParamChange({ timeRangeOffset: this.state.timeRangeOffset - 1 });
             }
         });
@@ -159,8 +164,8 @@ export class ActivityCharts extends Component<ActivityChartsState> {
             this.onChartParamChange({ chartType: this.state.chartType === 'bar' ? 'line' : 'bar' });
         });
         layout.querySelector('#btn-time-range')?.addEventListener('click', () => {
-            const cycle: Record<number, number> = { 7: 30, 30: 365, 365: 7 };
-            this.onChartParamChange({ timeRangeDays: cycle[this.state.timeRangeDays] || 7, timeRangeOffset: 0 });
+            const cycle: Record<number, number> = { 7: 30, 30: 365, 365: 0, 0: 7 };
+            this.onChartParamChange({ timeRangeDays: cycle[this.state.timeRangeDays] ?? 7, timeRangeOffset: 0 });
         });
         layout.querySelector('#btn-group-by')?.addEventListener('click', () => {
             this.onChartParamChange({ groupByMode: this.state.groupByMode === 'media_type' ? 'log_name' : 'media_type' });
@@ -209,7 +214,21 @@ export class ActivityCharts extends Component<ActivityChartsState> {
         };
 
         const today = new Date();
-        if (timeRangeDays === 7) {
+        if (timeRangeDays === 0) {
+            // All Time: include every log, group bar chart by year
+            validStart = '';
+            validEnd = '9999-12-31';
+            const years = new Set<number>();
+            for (const log of logs) {
+                years.add(parseInt(log.date.split('-')[0]));
+            }
+            const sortedYears = Array.from(years).sort((a, b) => a - b);
+            labels = sortedYears.map(y => String(y));
+            getBucketIndex = (dateStr: string) => {
+                const year = parseInt(dateStr.split('-')[0]);
+                return sortedYears.indexOf(year);
+            };
+        } else if (timeRangeDays === 7) {
             const endDay = new Date(today);
             endDay.setDate(today.getDate() - (7 * timeRangeOffset));
             const startDay = new Date(endDay);

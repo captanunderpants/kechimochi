@@ -20,35 +20,35 @@ where
     cleaned.parse::<i64>().map_err(serde::de::Error::custom)
 }
 
-fn deserialize_duration<'de, D>(deserializer: D) -> Result<i64, D::Error>
+fn deserialize_duration<'de, D>(deserializer: D) -> Result<f64, D::Error>
 where
     D: Deserializer<'de>,
 {
     let s = String::deserialize(deserializer)?;
     let trimmed = s.trim();
     if trimmed.is_empty() {
-        return Ok(0);
+        return Ok(0.0);
     }
     // Try HH:MM:SS or H:MM:SS format
     if trimmed.contains(':') {
         let parts: Vec<&str> = trimmed.split(':').collect();
         match parts.len() {
             3 => {
-                let hours: i64 = parts[0].parse().map_err(serde::de::Error::custom)?;
-                let mins: i64 = parts[1].parse().map_err(serde::de::Error::custom)?;
-                let secs: i64 = parts[2].parse().map_err(serde::de::Error::custom)?;
-                Ok(hours * 60 + mins + if secs >= 30 { 1 } else { 0 })
+                let hours: f64 = parts[0].parse().map_err(serde::de::Error::custom)?;
+                let mins: f64 = parts[1].parse().map_err(serde::de::Error::custom)?;
+                let secs: f64 = parts[2].parse().map_err(serde::de::Error::custom)?;
+                Ok(hours * 60.0 + mins + secs / 60.0)
             }
             2 => {
-                let mins: i64 = parts[0].parse().map_err(serde::de::Error::custom)?;
-                let secs: i64 = parts[1].parse().map_err(serde::de::Error::custom)?;
-                Ok(mins + if secs >= 30 { 1 } else { 0 })
+                let mins: f64 = parts[0].parse().map_err(serde::de::Error::custom)?;
+                let secs: f64 = parts[1].parse().map_err(serde::de::Error::custom)?;
+                Ok(mins + secs / 60.0)
             }
             _ => Err(serde::de::Error::custom(format!("invalid duration format: {}", trimmed))),
         }
     } else {
-        // Plain integer (minutes)
-        trimmed.replace(',', "").parse::<i64>().map_err(serde::de::Error::custom)
+        // Plain number (minutes, possibly fractional)
+        trimmed.replace(',', "").parse::<f64>().map_err(serde::de::Error::custom)
     }
 }
 
@@ -63,7 +63,7 @@ struct CsvRow {
     #[serde(rename = "Characters Read", default, deserialize_with = "deserialize_i64_strip_commas")]
     characters_read: i64,
     #[serde(rename = "Duration", deserialize_with = "deserialize_duration")]
-    duration: i64,
+    duration: f64,
     #[serde(rename = "Language", default)]
     language: String,
 }
@@ -155,7 +155,7 @@ pub fn import_csv(conn: &mut Connection, file_path: &str) -> Result<usize, Strin
                     tracking_status: "Ongoing".to_string(),
                     nsfw: false,
                     hidden: false,
-                    total_time_logged: 0,
+                    total_time_logged: 0.0,
                     total_characters_read: 0,
                     last_activity_date: String::new(),
                 };
@@ -264,7 +264,7 @@ pub fn analyze_media_csv(conn: &Connection, file_path: &str) -> Result<Vec<Media
                 tracking_status: row.get(9).unwrap_or_else(|_| "Untracked".to_string()),
                 nsfw: row.get::<_, i64>(10).unwrap_or(0) != 0,
                 hidden: row.get::<_, i64>(11).unwrap_or(0) != 0,
-                total_time_logged: 0,
+                total_time_logged: 0.0,
                 total_characters_read: 0,
                 last_activity_date: String::new(),
             })
@@ -334,7 +334,7 @@ pub fn apply_media_import(app_handle: &tauri::AppHandle, conn: &mut Connection, 
                 tracking_status: "Untracked".to_string(),
                 nsfw: false,
                 hidden: false,
-                total_time_logged: 0,
+                total_time_logged: 0.0,
                 total_characters_read: 0,
                 last_activity_date: String::new(),
             };
@@ -353,7 +353,7 @@ pub fn apply_media_import(app_handle: &tauri::AppHandle, conn: &mut Connection, 
                 tracking_status: "Untracked".to_string(),
                 nsfw: false,
                 hidden: false,
-                total_time_logged: 0,
+                total_time_logged: 0.0,
                 total_characters_read: 0,
                 last_activity_date: String::new(),
             };
