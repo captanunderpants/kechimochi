@@ -1,7 +1,7 @@
 import { Component } from '../core/component';
 import { html } from '../core/html';
 import { getLogs, getHeatmap, getAllMedia, ActivitySummary, DailyHeatmap, deleteLog, formatDuration } from '../api';
-import { customConfirm } from '../modals';
+import { customConfirm, showLogEditorModal } from '../modals';
 import { StatsCard } from './dashboard/StatsCard';
 import { HeatmapView } from './dashboard/HeatmapView';
 import { ActivityCharts } from './dashboard/ActivityCharts';
@@ -103,11 +103,22 @@ export class Dashboard extends Component<DashboardState> {
         // 3. Recent Logs Row
         const logsCard = html`
             <div class="card">
-                <h3 style="margin-bottom: 1rem;">Recent Activity</h3>
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                    <h3 style="margin: 0;">Recent Activity</h3>
+                    <button class="btn btn-ghost" id="btn-edit-logs" style="font-size: 0.8rem; padding: 0.3rem 0.6rem;">Edit Logs</button>
+                </div>
                 <div id="recent-logs-list" style="display: flex; flex-direction: column; gap: 0.5rem;"></div>
             </div>
         `;
         root.appendChild(logsCard);
+
+        logsCard.querySelector('#btn-edit-logs')?.addEventListener('click', async () => {
+            const changed = await showLogEditorModal();
+            if (changed) {
+                await this.loadData();
+            }
+        });
+
         this.renderLogs(logsCard.querySelector('#recent-logs-list') as HTMLElement);
     }
 

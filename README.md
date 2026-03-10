@@ -238,7 +238,11 @@ Activity log imports now accept a character count field. Character metrics are s
 
 ### Time Format
 
-Durations are now accepted in `HH:MM:SS`, `MM:SS`, or plain minutes. The `parseDuration()` function handles the conversion internally, and all times are displayed in `HH:MM:SS` format via `formatDuration()`.
+Durations are now accepted in `HH:MM:SS`, `MM:SS`, or plain minutes. The `parseDuration()` function handles the conversion internally, and all times are displayed in `HH:MM:SS` format via `formatDuration()`. Durations are stored as fractional minutes (`f64`) to preserve second-level precision throughout the stack.
+
+### Log Editor
+
+An **Edit Logs** button on the dashboard opens a full-screen modal listing every activity log in a scrollable grid. Each row shows the title, duration, character count, and date. Duration and character fields are inline-editable: click a cell, type a new value, and press Enter to save and advance to the next row for rapid bulk editing. A search box at the top filters logs by title. Rows can also be deleted individually.
 
 ### Language Field Removed
 

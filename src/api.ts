@@ -115,6 +115,10 @@ export async function deleteLog(id: number): Promise<void> {
   return await invoke('delete_log', { id });
 }
 
+export async function updateLog(id: number, durationMinutes: number, charactersRead: number): Promise<void> {
+  return await invoke('update_log', { id, durationMinutes, charactersRead });
+}
+
 export async function getLogs(): Promise<ActivitySummary[]> {
   return await invoke('get_logs');
 }

@@ -290,6 +290,14 @@ pub fn delete_log(conn: &Connection, id: i64) -> Result<()> {
     Ok(())
 }
 
+pub fn update_log(conn: &Connection, id: i64, duration_minutes: f64, characters_read: i64) -> Result<()> {
+    conn.execute(
+        "UPDATE main.activity_logs SET duration_minutes = ?1, characters_read = ?2 WHERE id = ?3",
+        params![duration_minutes, characters_read, id],
+    )?;
+    Ok(())
+}
+
 pub fn clear_activities(conn: &Connection) -> Result<()> {
     conn.execute("DELETE FROM main.activity_logs", [])?;
     Ok(())
