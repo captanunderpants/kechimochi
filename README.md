@@ -213,7 +213,7 @@ Each profile has its own database file named `kechimochi_<profilename>.db`.
 
 This project is provided as-is with no warranty. See the warning at the top of this document.
 
-## Changes from Main
+## Changes from Main (10/3/26)
 
 ### Media Classification Rework
 
