@@ -372,16 +372,17 @@ mod tests {
     use crate::db;
     use rusqlite::Connection;
     use std::io::Write;
-
-    fn setup_test_db() -> Connection {
-        let conn = Connection::open_in_memory().unwrap();
-        db::create_tables(&conn).unwrap();
-        conn
-    }
-
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     static COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+    /// Create an in-memory SQLite connection with both main and shared schemas populated.
+    fn setup_test_db() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute("ATTACH DATABASE ':memory:' AS shared", []).unwrap();
+        db::create_tables(&conn).unwrap();
+        conn
+    }
 
     fn write_csv(content: &str) -> String {
         let dir = std::env::temp_dir();
@@ -392,13 +393,116 @@ mod tests {
         path.to_str().unwrap().to_string()
     }
 
+    // ── deserialize_duration unit tests ──────────────────────────────────────
+
+    /// Helper: deserialise a duration string using serde's CSV path.
+    fn parse_duration_str(s: &str) -> f64 {
+        #[derive(serde::Deserialize)]
+        struct W {
+            #[serde(rename = "Duration", deserialize_with = "deserialize_duration")]
+            d: f64,
+        }
+        let csv = format!("Duration\n{}\n", s);
+        let mut rdr = csv::ReaderBuilder::new().has_headers(true).from_reader(csv.as_bytes());
+        rdr.deserialize::<W>().next().unwrap().unwrap().d
+    }
+
+    #[test]
+    fn test_deserialize_duration_hh_mm_ss() {
+        // 1:30:45 → 1*60 + 30 + 45/60 = 90.75 minutes
+        let v = parse_duration_str("1:30:45");
+        assert!((v - 90.75).abs() < 1e-9, "got {}", v);
+    }
+
+    #[test]
+    fn test_deserialize_duration_mm_ss_colon() {
+        // 45:30 → 45.5 minutes
+        let v = parse_duration_str("45:30");
+        assert!((v - 45.5).abs() < 1e-9, "got {}", v);
+    }
+
+    #[test]
+    fn test_deserialize_duration_fractional() {
+        let v = parse_duration_str("60");
+        assert!((v - 60.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_deserialize_duration_mm_ss() {
+        let v = parse_duration_str("30.5");
+        assert!((v - 30.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_deserialize_duration_plain_minutes() {
+        let v = parse_duration_str("1:00:00");
+        assert!((v - 60.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_deserialize_duration_zero_seconds() {
+        // 2:05:00 → 2*60 + 5 + 0/60 = 125.0 minutes (zero seconds component)
+        let v = parse_duration_str("2:05:00");
+        assert!((v - 125.0).abs() < 1e-9, "got {}", v);
+    }
+
+    /// Test empty duration string → returns 0.0
+    #[test]
+    fn test_deserialize_duration_empty() {
+        // Use a two-field CSV so the row is valid
+        #[derive(serde::Deserialize)]
+        struct W {
+            #[serde(rename = "Title")]
+            _title: String,
+            #[serde(rename = "Duration", deserialize_with = "deserialize_duration")]
+            d: f64,
+        }
+        let csv = "Title,Duration\ntest,\n";
+        let mut rdr = csv::ReaderBuilder::new().has_headers(true).from_reader(csv.as_bytes());
+        let w: W = rdr.deserialize::<W>().next().unwrap().unwrap();
+        assert_eq!(w.d, 0.0);
+    }
+
+    // ── deserialize_i64_strip_commas unit tests ───────────────────────────────
+
+    fn parse_chars_str(s: &str) -> i64 {
+        #[derive(serde::Deserialize)]
+        struct W {
+            #[serde(rename = "Title")]
+            _t: String,
+            #[serde(rename = "Characters Read", default, deserialize_with = "deserialize_i64_strip_commas")]
+            c: i64,
+        }
+        // Use quoted value to safely pass commas through CSV
+        let csv = format!("Title,Characters Read\ntest,\"{}\"\n", s);
+        let mut rdr = csv::ReaderBuilder::new().has_headers(true).from_reader(csv.as_bytes());
+        rdr.deserialize::<W>().next().unwrap().unwrap().c
+    }
+
+    #[test]
+    fn test_chars_with_commas() {
+        assert_eq!(parse_chars_str("1,234,567"), 1_234_567);
+    }
+
+    #[test]
+    fn test_chars_plain() {
+        assert_eq!(parse_chars_str("42"), 42);
+    }
+
+    #[test]
+    fn test_chars_empty() {
+        assert_eq!(parse_chars_str(""), 0);
+    }
+
+    // ── import_csv integration tests ─────────────────────────────────────────
+
     #[test]
     fn test_import_csv_basic() {
         let mut conn = setup_test_db();
         let csv_path = write_csv(
             "Date,Log Name,Media Type,Duration,Language\n\
-             2024-01-15,ある魔女が死ぬまで,Reading,45,Japanese\n\
-             2024-01-16,呪術廻戦,Watching,25,Japanese\n"
+             2024-01-15,ある魔女が死ぬまで,Anime,45,Japanese\n\
+             2024-01-16,呪術廻戦,Anime,25,Japanese\n"
         );
 
         let count = import_csv(&mut conn, &csv_path).unwrap();
@@ -418,16 +522,15 @@ mod tests {
         let mut conn = setup_test_db();
         let csv_path = write_csv(
             "Date,Log Name,Media Type,Duration,Language\n\
-             2024-01-15,FF7,Playing,60,Japanese\n\
-             2024-01-16,FF7,Playing,120,Japanese\n"
+             2024-01-15,FF7,JRPG,60,Japanese\n\
+             2024-01-16,FF7,JRPG,120,Japanese\n"
         );
 
         let count = import_csv(&mut conn, &csv_path).unwrap();
         assert_eq!(count, 2);
 
-        // Only one media entry despite two rows with same title
         let media = db::get_all_media(&conn).unwrap();
-        assert_eq!(media.len(), 1);
+        assert_eq!(media.len(), 1, "Expected 1 media, got {}", media.len());
         assert_eq!(media[0].title, "FF7");
 
         let logs = db::get_logs(&conn).unwrap();
@@ -441,7 +544,7 @@ mod tests {
         let mut conn = setup_test_db();
         let csv_path = write_csv(
             "Date,Log Name,Media Type,Duration,Language\n\
-             2024/03/01,本好きの下剋上,Reading,30,Japanese\n"
+             2024/03/01,本好きの下剋上,Anime,30,Japanese\n"
         );
 
         let count = import_csv(&mut conn, &csv_path).unwrap();
@@ -449,6 +552,117 @@ mod tests {
 
         let logs = db::get_logs(&conn).unwrap();
         assert_eq!(logs[0].date, "2024-03-01");
+
+        std::fs::remove_file(csv_path).ok();
+    }
+
+    #[test]
+    fn test_import_csv_duration_hhmmss() {
+        let mut conn = setup_test_db();
+        // 1:30:45 should be stored as 90.75 minutes (1*60 + 30 + 45/60)
+        let csv_path = write_csv(
+            "Date,Log Name,Media Type,Duration,Language\n\
+             2024-04-01,アニメ,Anime,1:30:45,Japanese\n"
+        );
+
+        import_csv(&mut conn, &csv_path).unwrap();
+        let logs = db::get_logs(&conn).unwrap();
+        assert!((logs[0].duration_minutes - 90.75).abs() < 1e-6,
+            "Expected 90.75, got {}", logs[0].duration_minutes);
+
+        std::fs::remove_file(csv_path).ok();
+    }
+
+    #[test]
+    fn test_import_csv_missing_file() {
+        let mut conn = setup_test_db();
+        let result = import_csv(&mut conn, "/nonexistent/path/test.csv");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_import_csv_reading_requires_chars_read() {
+        let mut conn = setup_test_db();
+        // Manga (Reading type) without Characters Read should fail
+        let csv_path = write_csv(
+            "Date,Log Name,Media Type,Duration,Characters Read,Language\n\
+             2024-04-01,テストマンガ,Manga,60,0,Japanese\n"
+        );
+
+        let result = import_csv(&mut conn, &csv_path);
+        assert!(result.is_err(), "Expected error for Reading type without characters");
+
+        std::fs::remove_file(csv_path).ok();
+    }
+
+    #[test]
+    fn test_import_csv_reading_with_chars_succeeds() {
+        let mut conn = setup_test_db();
+        let csv_path = write_csv(
+            "Date,Log Name,Media Type,Duration,Characters Read,Language\n\
+             2024-04-01,テストマンガ,Manga,60,5000,Japanese\n"
+        );
+
+        let count = import_csv(&mut conn, &csv_path).unwrap();
+        assert_eq!(count, 1);
+        let logs = db::get_logs(&conn).unwrap();
+        assert_eq!(logs[0].characters_read, 5000);
+
+        std::fs::remove_file(csv_path).ok();
+    }
+
+    #[test]
+    fn test_import_csv_characters_read_with_commas() {
+        let mut conn = setup_test_db();
+        let csv_path = write_csv(
+            "Date,Log Name,Media Type,Duration,Characters Read,Language\n\
+             2024-04-01,テスト,Manga,60,\"1,234\",Japanese\n"
+        );
+
+        let count = import_csv(&mut conn, &csv_path).unwrap();
+        assert_eq!(count, 1);
+        let logs = db::get_logs(&conn).unwrap();
+        assert_eq!(logs[0].characters_read, 1234);
+
+        std::fs::remove_file(csv_path).ok();
+    }
+
+    #[test]
+    fn test_import_csv_language_defaults_to_japanese() {
+        let mut conn = setup_test_db();
+        let csv_path = write_csv(
+            "Date,Log Name,Media Type,Duration,Language\n\
+             2024-04-01,テスト,Anime,30,\n"
+        );
+
+        import_csv(&mut conn, &csv_path).unwrap();
+        let media = db::get_all_media(&conn).unwrap();
+        assert_eq!(media[0].language, "日本語");
+
+        std::fs::remove_file(csv_path).ok();
+    }
+
+    #[test]
+    fn test_import_csv_media_type_mapping() {
+        let mut conn = setup_test_db();
+        let csv_path = write_csv(
+            "Date,Log Name,Media Type,Duration,Characters Read,Language\n\
+             2024-04-01,アニメ,Anime,30,0,Japanese\n\
+             2024-04-02,マンガ,Manga,30,500,Japanese\n\
+             2024-04-03,ゲーム,JRPG,60,0,Japanese\n"
+        );
+
+        import_csv(&mut conn, &csv_path).unwrap();
+        let media = db::get_all_media(&conn).unwrap();
+
+        // Sort for deterministic order
+        let by_title: std::collections::HashMap<String, String> = media.iter()
+            .map(|m| (m.title.clone(), m.media_type.clone()))
+            .collect();
+
+        assert_eq!(by_title["アニメ"], "Listening");
+        assert_eq!(by_title["マンガ"], "Reading");
+        assert_eq!(by_title["ゲーム"], "Playing");
 
         std::fs::remove_file(csv_path).ok();
     }

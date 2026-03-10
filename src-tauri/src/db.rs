@@ -757,5 +757,186 @@ mod tests {
         assert!(index_names.contains(&"idx_logs_date".to_string()), "Missing idx_logs_date");
         assert!(index_names.contains(&"idx_logs_media_date".to_string()), "Missing idx_logs_media_date");
     }
+
+    // ── delete_log ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_delete_log() {
+        let conn = setup_test_db();
+        let media_id = add_media_with_id(&conn, &sample_media("削除テスト")).unwrap();
+        let log_id = add_log(&conn, &ActivityLog {
+            id: None, media_id, duration_minutes: 10.0, characters_read: 0, date: "2024-05-01".to_string(),
+        }).unwrap();
+
+        delete_log(&conn, log_id).unwrap();
+        let logs = get_logs(&conn).unwrap();
+        assert_eq!(logs.len(), 0);
+    }
+
+    #[test]
+    fn test_delete_nonexistent_log_is_ok() {
+        let conn = setup_test_db();
+        // Deleting a row that doesn't exist should not error
+        assert!(delete_log(&conn, 9999).is_ok());
+    }
+
+    // ── update_log ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_update_log() {
+        let conn = setup_test_db();
+        let media_id = add_media_with_id(&conn, &sample_media("更新テスト")).unwrap();
+        let log_id = add_log(&conn, &ActivityLog {
+            id: None, media_id, duration_minutes: 30.0, characters_read: 0, date: "2024-05-01".to_string(),
+        }).unwrap();
+
+        update_log(&conn, log_id, 90.5, 1500).unwrap();
+
+        let logs = get_logs(&conn).unwrap();
+        assert_eq!(logs.len(), 1);
+        assert!((logs[0].duration_minutes - 90.5).abs() < 1e-9);
+        assert_eq!(logs[0].characters_read, 1500);
+    }
+
+    // ── clear_activities ─────────────────────────────────────────────────────
+
+    #[test]
+    fn test_clear_activities() {
+        let conn = setup_test_db();
+        let media_id = add_media_with_id(&conn, &sample_media("クリアテスト")).unwrap();
+        for i in 0..5 {
+            add_log(&conn, &ActivityLog {
+                id: None, media_id, duration_minutes: 20.0, characters_read: 0,
+                date: format!("2024-06-{:02}", i + 1),
+            }).unwrap();
+        }
+        assert_eq!(get_logs(&conn).unwrap().len(), 5);
+
+        clear_activities(&conn).unwrap();
+        assert_eq!(get_logs(&conn).unwrap().len(), 0);
+        // Media should still exist
+        assert_eq!(get_all_media(&conn).unwrap().len(), 1);
+    }
+
+    // ── get_logs_for_media ────────────────────────────────────────────────────
+
+    #[test]
+    fn test_get_logs_for_media() {
+        let conn = setup_test_db();
+        let id1 = add_media_with_id(&conn, &sample_media("タイトルA")).unwrap();
+        let id2 = add_media_with_id(&conn, &sample_media("タイトルB")).unwrap();
+
+        add_log(&conn, &ActivityLog { id: None, media_id: id1, duration_minutes: 10.0, characters_read: 0, date: "2024-07-01".to_string() }).unwrap();
+        add_log(&conn, &ActivityLog { id: None, media_id: id1, duration_minutes: 20.0, characters_read: 0, date: "2024-07-02".to_string() }).unwrap();
+        add_log(&conn, &ActivityLog { id: None, media_id: id2, duration_minutes: 30.0, characters_read: 0, date: "2024-07-03".to_string() }).unwrap();
+
+        let logs_a = get_logs_for_media(&conn, id1).unwrap();
+        assert_eq!(logs_a.len(), 2, "Expected 2 logs for media A");
+        // Ordered by date DESC
+        assert_eq!(logs_a[0].date, "2024-07-02");
+        assert_eq!(logs_a[1].date, "2024-07-01");
+
+        let logs_b = get_logs_for_media(&conn, id2).unwrap();
+        assert_eq!(logs_b.len(), 1);
+        assert_eq!(logs_b[0].title, "タイトルB");
+    }
+
+    // ── settings ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_set_and_get_setting() {
+        let conn = setup_test_db();
+        set_setting(&conn, "theme", "dark").unwrap();
+        let val = get_setting(&conn, "theme").unwrap();
+        assert_eq!(val, Some("dark".to_string()));
+    }
+
+    #[test]
+    fn test_get_missing_setting_returns_none() {
+        let conn = setup_test_db();
+        let val = get_setting(&conn, "nonexistent_key").unwrap();
+        assert_eq!(val, None);
+    }
+
+    #[test]
+    fn test_set_setting_upserts() {
+        let conn = setup_test_db();
+        set_setting(&conn, "color", "red").unwrap();
+        set_setting(&conn, "color", "blue").unwrap();
+        let val = get_setting(&conn, "color").unwrap();
+        assert_eq!(val, Some("blue".to_string()));
+    }
+
+    // ── fractional duration precision ─────────────────────────────────────────
+
+    #[test]
+    fn test_fractional_duration_stored_exactly() {
+        let conn = setup_test_db();
+        let media_id = add_media_with_id(&conn, &sample_media("フラクション")).unwrap();
+        // 1h 30m 45s = 90 + 0.75 = 90.75 minutes
+        add_log(&conn, &ActivityLog {
+            id: None, media_id, duration_minutes: 90.75, characters_read: 0, date: "2024-08-01".to_string(),
+        }).unwrap();
+
+        let logs = get_logs(&conn).unwrap();
+        assert!((logs[0].duration_minutes - 90.75).abs() < 1e-9,
+            "Expected 90.75, got {}", logs[0].duration_minutes);
+    }
+
+    // ── content-type migration ─────────────────────────────────────────────
+
+    #[test]
+    fn test_migrate_content_types() {
+        let conn = setup_test_db();
+        // Insert media with legacy content type names directly
+        conn.execute(
+            "INSERT INTO shared.media (title, media_type, status, language, content_type, tracking_status) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            rusqlite::params!["レガシー1", "Watching", "Active", "日本語", "Youtube Video", "Untracked"],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO shared.media (title, media_type, status, language, content_type, tracking_status) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            rusqlite::params!["レガシー2", "Reading", "Active", "日本語", "Novel", "Untracked"],
+        ).unwrap();
+
+        // Running migrate_content_types by calling create_tables (which calls it internally)
+        migrate_content_types(&conn).unwrap();
+
+        let media = get_all_media(&conn).unwrap();
+        let yt = media.iter().find(|m| m.title == "レガシー1").unwrap();
+        let ln = media.iter().find(|m| m.title == "レガシー2").unwrap();
+        assert_eq!(yt.content_type, "Youtube");
+        assert_eq!(ln.content_type, "Light Novel");
+    }
+
+    // ── media ordering: active before archived ────────────────────────────────
+
+    #[test]
+    fn test_media_ordering_active_before_archived() {
+        let conn = setup_test_db();
+        let archived = Media {
+            id: None,
+            title: "アーカイブ済み".to_string(),
+            media_type: "Reading".to_string(),
+            status: "Archived".to_string(),
+            language: "日本語".to_string(),
+            description: String::new(),
+            cover_image: String::new(),
+            extra_data: "{}".to_string(),
+            content_type: "Manga".to_string(),
+            tracking_status: "Untracked".to_string(),
+            nsfw: false,
+            hidden: false,
+            total_time_logged: 0.0,
+            total_characters_read: 0,
+            last_activity_date: String::new(),
+        };
+        add_media_with_id(&conn, &archived).unwrap();
+        add_media_with_id(&conn, &sample_media("アクティブ")).unwrap();
+
+        let media = get_all_media(&conn).unwrap();
+        // Active media should come first
+        assert_eq!(media[0].title, "アクティブ");
+        assert_eq!(media[1].title, "アーカイブ済み");
+    }
 }
 
