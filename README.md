@@ -277,8 +277,8 @@ The library view now includes sort and filter controls:
 
 ### Media Detail Stats Row
 
-Each media entry's detail page displays computed statistics: total characters read, total time, reading speed (文字/hour), and first/last activity dates.
+Each media entry's detail page displays curated statistics in a row: total characters read, total time, reading speed (文字/hour), and first/last activity dates.
 
-### Total Hours on Dashboard
+### Total Statistics on Dashboard
 
-A total lifetime hours label is displayed in the stats card on the dashboard.
+A total characters read and total lifetime hours label have been displayed in the stats card on the dashboard.
