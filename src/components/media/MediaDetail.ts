@@ -1,7 +1,7 @@
 import { Component } from '../../core/component';
 import { html, escapeHTML } from '../../core/html';
-import { Media, ActivitySummary, updateMedia, uploadCoverImage, downloadAndSaveImage, readFileBytes, deleteMedia, formatDuration } from '../../api';
-import { customConfirm, customPrompt, showJitenSearchModal, showImportMergeModal } from '../../modals';
+import { Media, ActivitySummary, updateMedia, uploadCoverImage, downloadAndSaveImage, readFileBytes, deleteMedia, formatDuration, getLogsForMedia } from '../../api';
+import { customConfirm, customPrompt, showJitenSearchModal, showImportMergeModal, showLogActivityModal } from '../../modals';
 import { CONTENT_TYPES, getMediaTypeForContentType, isReadingContentType } from '../../modals/activity';
 import { isValidImporterUrl, getAvailableSourcesForContentType, fetchMetadataForUrl } from '../../importers';
 import { open } from '@tauri-apps/plugin-dialog';
@@ -140,7 +140,10 @@ export class MediaDetail extends Component<MediaDetailState> {
 
                         <!-- Activity Logs -->
                         <div class="card" style="margin-top: 1rem; flex: 1; display: flex; flex-direction: column; min-height: 200px;">
-                            <h4 style="margin: 0 0 1rem 0; color: var(--text-secondary);">Recent Activity</h4>
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                                <h4 style="margin: 0; color: var(--text-secondary);">Recent Activity</h4>
+                                <button class="btn btn-primary" id="btn-log-activity" style="font-size: 0.8rem; padding: 0.3rem 0.8rem;">Log Activity</button>
+                            </div>
                             <div id="media-logs-container" style="display: flex; flex-direction: column; gap: 0.5rem; flex: 1; overflow-y: auto;"></div>
                         </div>
                     </div>
@@ -239,7 +242,7 @@ export class MediaDetail extends Component<MediaDetailState> {
             cards.push(statCard("Reading Speed", `${readingSpeed.toLocaleString()} 文字/hour`, "var(--accent-yellow)"));
         }
         cards.push(statCard(`First ${verb}`, firstLogDate, "var(--text-primary)"));
-        cards.push(statCard(`Last ${verb}`, lastLogDate, "var(--text-primary)"));
+        cards.push(statCard(media.tracking_status === 'Complete' ? 'Finished on' : `Last ${verb}`, lastLogDate, "var(--text-primary)"));
 
         statsDiv.innerHTML = `
             <div style="display: flex; gap: 0.75rem; flex-wrap: wrap;">
@@ -358,6 +361,15 @@ export class MediaDetail extends Component<MediaDetailState> {
             this.state.media.nsfw = !this.state.media.nsfw;
             await updateMedia(this.state.media);
             this.render();
+        });
+
+        root.querySelector('#btn-log-activity')?.addEventListener('click', async () => {
+            const logged = await showLogActivityModal({ title: this.state.media.title, contentType: this.state.media.content_type || undefined });
+            if (logged) {
+                const freshLogs = await getLogsForMedia(this.state.media.id!);
+                this.state.logs = freshLogs;
+                this.render();
+            }
         });
 
         // Right-click to toggle reveal NSFW cover

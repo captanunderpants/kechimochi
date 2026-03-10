@@ -68,7 +68,7 @@ export function isReadingContentType(contentType: string): boolean {
 
 export { CONTENT_TYPES, READING_TYPES };
 
-export async function showLogActivityModal(): Promise<boolean> {
+export async function showLogActivityModal(prefill?: { title?: string, contentType?: string }): Promise<boolean> {
     return new Promise(async (resolve) => {
         const overlay = document.createElement('div');
         overlay.className = 'modal-overlay';
@@ -79,29 +79,38 @@ export async function showLogActivityModal(): Promise<boolean> {
         const mediaList = await getAllMedia();
         const activeMedia = mediaList.filter(m => !['Archived', 'Inactive', 'Finished', 'Completed'].includes(m.status));
 
+        const prefillTitle = prefill?.title || '';
+        const prefillContentType = prefill?.contentType || '';
+        const prefillIsReading = prefillContentType ? isReadingContentType(prefillContentType) : false;
+        const prefillIsAnime = prefillContentType === 'Anime';
+
         overlay.innerHTML = `
             <div class="modal-content">
                 <h3>Log Activity</h3>
                 <form id="add-activity-form" style="margin-top: 1rem; display: flex; flex-direction: column; gap: 1rem;">
                     <div style="display: flex; flex-direction: column; gap: 0.5rem;">
                         <label style="font-size: 0.85rem; color: var(--text-secondary);">Media Title</label>
-                        <input type="text" id="activity-media" list="media-datalist" autocomplete="off" style="background: var(--bg-dark); color: var(--text-primary); border: 1px solid var(--border-color); padding: 0.5rem; border-radius: var(--radius-sm);" required />
+                        <input type="text" id="activity-media" list="media-datalist" autocomplete="off" style="background: var(--bg-dark); color: var(--text-primary); border: 1px solid var(--border-color); padding: 0.5rem; border-radius: var(--radius-sm);" value="${prefillTitle.replace(/"/g, '&quot;')}" required />
                         <datalist id="media-datalist">${activeMedia.map(m => `<option value="${m.title}">`).join('')}</datalist>
                     </div>
                     <div style="display: flex; flex-direction: column; gap: 0.5rem;">
                         <label style="font-size: 0.85rem; color: var(--text-secondary);">Media Type</label>
                         <select id="activity-content-type" style="background: var(--bg-dark); color: var(--text-primary); border: 1px solid var(--border-color); padding: 0.5rem; border-radius: var(--radius-sm); outline: none;" required>
-                            <option value="" disabled selected>\u2014 Select \u2014</option>
-                            ${CONTENT_TYPES.map(t => `<option value="${t}">${t}</option>`).join('')}
+                            <option value="" disabled ${!prefillContentType ? 'selected' : ''}>\u2014 Select \u2014</option>
+                            ${CONTENT_TYPES.map(t => `<option value="${t}" ${t === prefillContentType ? 'selected' : ''}>${t}</option>`).join('')}
                         </select>
                     </div>
-                    <div id="characters-read-container" style="display: none; flex-direction: column; gap: 0.5rem;">
+                    <div id="characters-read-container" style="display: ${prefillIsReading ? 'flex' : 'none'}; flex-direction: column; gap: 0.5rem;">
                         <label style="font-size: 0.85rem; color: var(--text-secondary);">Characters Read</label>
                         <input type="number" id="activity-characters-read" min="0" step="1" style="background: var(--bg-dark); color: var(--text-primary); border: 1px solid var(--border-color); padding: 0.5rem; border-radius: var(--radius-sm);" />
                     </div>
+                    <div id="episodes-container" style="display: ${prefillIsAnime ? 'flex' : 'none'}; flex-direction: column; gap: 0.5rem;">
+                        <label style="font-size: 0.85rem; color: var(--text-secondary);">Number of Episodes</label>
+                        <input type="number" id="activity-episodes" min="1" step="1" placeholder="e.g. 3" style="background: var(--bg-dark); color: var(--text-primary); border: 1px solid var(--border-color); padding: 0.5rem; border-radius: var(--radius-sm);" />
+                    </div>
                     <div style="display: flex; flex-direction: column; gap: 0.5rem;">
                         <label style="font-size: 0.85rem; color: var(--text-secondary);">Duration</label>
-                        <input type="text" id="activity-duration" placeholder="HH:MM:SS" style="background: var(--bg-dark); color: var(--text-primary); border: 1px solid var(--border-color); padding: 0.5rem; border-radius: var(--radius-sm);" required />
+                        <input type="text" id="activity-duration" placeholder="HH:MM:SS" style="background: var(--bg-dark); color: var(--text-primary); border: 1px solid var(--border-color); padding: 0.5rem; border-radius: var(--radius-sm);" />
                     </div>
                     <div style="display: flex; flex-direction: column; gap: 0.5rem; align-items: center;">
                         <label style="font-size: 0.85rem; color: var(--text-secondary);">Date</label>
@@ -121,6 +130,16 @@ export async function showLogActivityModal(): Promise<boolean> {
 
         const contentTypeSelect = overlay.querySelector('#activity-content-type') as HTMLSelectElement;
         const charsContainer = overlay.querySelector('#characters-read-container') as HTMLElement;
+        const episodesContainer = overlay.querySelector('#episodes-container') as HTMLElement;
+        const episodesInput = overlay.querySelector('#activity-episodes') as HTMLInputElement;
+        const durationInput = overlay.querySelector('#activity-duration') as HTMLInputElement;
+
+        const updateFieldVisibility = () => {
+            const ct = contentTypeSelect.value;
+            charsContainer.style.display = isReadingContentType(ct) ? 'flex' : 'none';
+            episodesContainer.style.display = ct === 'Anime' ? 'flex' : 'none';
+            if (ct !== 'Anime') episodesInput.value = '';
+        };
 
         // Auto-populate content type when user selects an existing media
         const mediaInput = overlay.querySelector('#activity-media') as HTMLInputElement;
@@ -128,14 +147,12 @@ export async function showLogActivityModal(): Promise<boolean> {
             const match = mediaList.find(m => m.title.toLowerCase() === mediaInput.value.trim().toLowerCase());
             if (match && match.content_type && CONTENT_TYPES.includes(match.content_type as any)) {
                 contentTypeSelect.value = match.content_type;
-                charsContainer.style.display = isReadingContentType(match.content_type) ? 'flex' : 'none';
+                updateFieldVisibility();
             }
         });
 
-        // Show/hide characters read based on content type
-        contentTypeSelect.addEventListener('change', () => {
-            charsContainer.style.display = isReadingContentType(contentTypeSelect.value) ? 'flex' : 'none';
-        });
+        // Show/hide fields based on content type
+        contentTypeSelect.addEventListener('change', updateFieldVisibility);
 
         const cleanup = () => {
              overlay.classList.remove('active');
@@ -146,11 +163,30 @@ export async function showLogActivityModal(): Promise<boolean> {
         overlay.querySelector('#add-activity-form')!.addEventListener('submit', async (e) => {
             e.preventDefault();
             const mediaTitle = (overlay.querySelector('#activity-media') as HTMLInputElement).value.trim();
-            const durationRaw = (overlay.querySelector('#activity-duration') as HTMLInputElement).value;
-            const duration = parseDuration(durationRaw);
             const selectedContentType = contentTypeSelect.value;
-            if (!mediaTitle || isNaN(duration) || duration <= 0 || !selectedContentType) return;
-            const durationMinutes = duration;
+            if (!mediaTitle || !selectedContentType) return;
+
+            const episodeCount = parseInt(episodesInput.value) || 0;
+            const durationRaw = durationInput.value.trim();
+            const durationFromInput = durationRaw ? parseDuration(durationRaw) : NaN;
+
+            let durationMinutes: number;
+            if (selectedContentType === 'Anime') {
+                if (episodeCount > 0 && !isNaN(durationFromInput) && durationFromInput > 0) {
+                    // Both filled — use duration directly
+                    durationMinutes = durationFromInput;
+                } else if (episodeCount > 0) {
+                    durationMinutes = episodeCount * 20;
+                } else if (!isNaN(durationFromInput) && durationFromInput > 0) {
+                    durationMinutes = durationFromInput;
+                } else {
+                    alert('Please enter either the number of episodes or a duration.');
+                    return;
+                }
+            } else {
+                if (isNaN(durationFromInput) || durationFromInput <= 0) return;
+                durationMinutes = durationFromInput;
+            }
 
             const isReading = isReadingContentType(selectedContentType);
             const charactersRead = isReading ? parseInt((overlay.querySelector('#activity-characters-read') as HTMLInputElement).value) || 0 : 0;

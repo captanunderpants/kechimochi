@@ -183,6 +183,7 @@ export class Dashboard extends Component<DashboardState> {
                 if (confirm) {
                     await deleteLog(id);
                     await this.loadData();
+                    this.render();
                 }
             });
         });
