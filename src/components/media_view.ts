@@ -36,7 +36,7 @@ export class MediaView extends Component<MediaViewState> {
             gridFilters: {
                 searchQuery: '',
                 typeFilter: 'All',
-                statusFilter: 'All',
+                statusFilter: 'Ongoing',
                 immersionFilter: 'All',
                 sortBy: 'default',
                 sortAscending: false
