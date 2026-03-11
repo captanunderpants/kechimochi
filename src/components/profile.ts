@@ -36,6 +36,11 @@ export class ProfileView extends Component<ProfileState> {
         };
     }
 
+    private async loadReadingSpeed(): Promise<number> {
+        const val = await getSetting('default_reading_speed');
+        return val ? parseInt(val) || 15000 : 15000;
+    }
+
     async render() {
         if (!this.state.loaded) {
             await this.loadData();
@@ -73,6 +78,17 @@ export class ProfileView extends Component<ProfileState> {
                             <option value="yellow-lime" ${theme === 'yellow-lime' ? 'selected' : ''}>Yellow Lime</option>
                             <option value="noctua-brown" ${theme === 'noctua-brown' ? 'selected' : ''}>Noctua Brown</option>
                         </select>
+                    </div>
+                </div>
+
+                <!-- Reading Settings -->
+                <div class="card" style="display: flex; flex-direction: column; gap: 1rem;">
+                    <h3>Reading Settings</h3>
+                    <p style="color: var(--text-secondary); font-size: 0.9rem;">Used to estimate time remaining for reading entries. Your actual reading speed is calculated from logged sessions automatically. This default is used when no sessions have been logged yet.</p>
+                    <div style="display: flex; flex-direction: column; gap: 0.5rem;">
+                        <label for="profile-reading-speed" style="font-size: 0.85rem; font-weight: 500;">Default Reading Speed (characters / hour)</label>
+                        <input type="number" id="profile-reading-speed" min="100" step="100"
+                               style="width: 200px; background: var(--bg-dark); color: var(--text-primary); border: 1px solid var(--border-color); padding: 0.5rem; border-radius: var(--radius-sm); appearance: textfield; -moz-appearance: textfield;" />
                     </div>
                 </div>
 
@@ -138,6 +154,13 @@ export class ProfileView extends Component<ProfileState> {
 
     private setupListeners(root: HTMLElement) {
         const { currentProfile } = this.state;
+
+        const readingSpeedInput = root.querySelector('#profile-reading-speed') as HTMLInputElement;
+        this.loadReadingSpeed().then(v => { readingSpeedInput.value = String(v); });
+        readingSpeedInput.addEventListener('change', async () => {
+            const v = parseInt(readingSpeedInput.value);
+            if (!isNaN(v) && v >= 100) await setSetting('default_reading_speed', String(v));
+        });
 
         root.querySelector('#profile-select-theme')?.addEventListener('change', async (e) => {
             const theme = (e.target as HTMLSelectElement).value;

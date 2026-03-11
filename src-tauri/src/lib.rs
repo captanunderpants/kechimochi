@@ -50,9 +50,9 @@ fn delete_log(state: State<DbState>, id: i64) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn update_log(state: State<DbState>, id: i64, duration_minutes: f64, characters_read: i64) -> Result<(), String> {
+fn update_log(state: State<DbState>, id: i64, duration_minutes: f64, characters_read: i64, date: String) -> Result<(), String> {
     let conn = state.conn.lock().unwrap();
-    db::update_log(&conn, id, duration_minutes, characters_read).map_err(|e| e.to_string())
+    db::update_log(&conn, id, duration_minutes, characters_read, &date).map_err(|e| e.to_string())
 }
 
 #[tauri::command]

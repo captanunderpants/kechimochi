@@ -1,6 +1,6 @@
 import { Component } from '../../core/component';
 import { html, escapeHTML } from '../../core/html';
-import { Media, ActivitySummary, updateMedia, uploadCoverImage, downloadAndSaveImage, readFileBytes, deleteMedia, formatDuration, getLogsForMedia } from '../../api';
+import { Media, ActivitySummary, updateMedia, uploadCoverImage, downloadAndSaveImage, readFileBytes, deleteMedia, formatDuration, getLogsForMedia, deleteLog, getSetting } from '../../api';
 import { customConfirm, customPrompt, showJitenSearchModal, showImportMergeModal, showLogActivityModal } from '../../modals';
 import { CONTENT_TYPES, getMediaTypeForContentType, isReadingContentType } from '../../modals/activity';
 import { isValidImporterUrl, getAvailableSourcesForContentType, fetchMetadataForUrl } from '../../importers';
@@ -156,7 +156,18 @@ export class MediaDetail extends Component<MediaDetailState> {
         this.renderStats(detailView);
         
         const logsContainer = detailView.querySelector('#media-logs-container') as HTMLElement;
-        new MediaLog(logsContainer, logs).render();
+
+        const handleDeleteLog = async (logId: number) => {
+            await deleteLog(logId);
+            this.setState({ logs: this.state.logs.filter(l => l.id !== logId) });
+            logsContainer.innerHTML = '';
+            new MediaLog(logsContainer, this.state.logs, handleDeleteLog).render();
+            const statsDiv = detailView.querySelector('#media-personal-stats') as HTMLElement;
+            if (statsDiv) { statsDiv.innerHTML = ''; statsDiv.style.display = 'none'; }
+            await this.renderStats(detailView);
+        };
+
+        new MediaLog(logsContainer, logs, handleDeleteLog).render();
     }
 
     private getContentTypeOptions(media: Media): string {
@@ -217,6 +228,10 @@ export class MediaDetail extends Component<MediaDetailState> {
             ? Math.round(totalCharsRead / (totalMin / 60))
             : 0;
 
+        // Load default reading speed from settings (fallback: 15000 chars/hour)
+        const defaultSpeedRaw = await getSetting('default_reading_speed');
+        const defaultReadingSpeed = defaultSpeedRaw ? parseInt(defaultSpeedRaw) || 15000 : 15000;
+
         let verb = "Logged";
         if (media.media_type === "Playing") verb = "Played";
         else if (media.media_type === "Listening") verb = "Listened";
@@ -241,6 +256,26 @@ export class MediaDetail extends Component<MediaDetailState> {
         if (isReading && readingSpeed > 0) {
             cards.push(statCard("Reading Speed", `${readingSpeed.toLocaleString()} 文字/hour`, "var(--accent-yellow)"));
         }
+
+        // Estimated time remaining — only for incomplete reading entries with a known char count
+        if (isReading && !['Complete', 'Untracked'].includes(media.tracking_status)) {
+            let extraData: Record<string, string> = {};
+            try { extraData = JSON.parse(media.extra_data || "{}"); } catch {}
+            const charCountStr = Object.entries(extraData).find(([k]) => k.toLowerCase().includes('character count'))?.[1];
+            if (charCountStr) {
+                const totalCharCount = parseInt(charCountStr.replace(/,/g, '')) || 0;
+                if (totalCharCount > 0) {
+                    const remaining = totalCharCount - totalCharsRead;
+                    if (remaining > 0) {
+                        const effectiveSpeed = readingSpeed > 0 ? readingSpeed : defaultReadingSpeed;
+                        const remainingMinutes = (remaining / effectiveSpeed) * 60;
+                        const speedNote = readingSpeed <= 0 ? ' (default)' : '';
+                        cards.push(statCard("Est. Time Remaining", formatDuration(remainingMinutes) + speedNote, "var(--accent-purple)"));
+                    }
+                }
+            }
+        }
+
         cards.push(statCard(`First ${verb}`, firstLogDate, "var(--text-primary)"));
         cards.push(statCard(media.tracking_status === 'Complete' ? 'Finished on' : `Last ${verb}`, lastLogDate, "var(--text-primary)"));
 

@@ -314,10 +314,10 @@ pub fn delete_log(conn: &Connection, id: i64) -> Result<()> {
     Ok(())
 }
 
-pub fn update_log(conn: &Connection, id: i64, duration_minutes: f64, characters_read: i64) -> Result<()> {
+pub fn update_log(conn: &Connection, id: i64, duration_minutes: f64, characters_read: i64, date: &str) -> Result<()> {
     conn.execute(
-        "UPDATE main.activity_logs SET duration_minutes = ?1, characters_read = ?2 WHERE id = ?3",
-        params![duration_minutes, characters_read, id],
+        "UPDATE main.activity_logs SET duration_minutes = ?1, characters_read = ?2, date = ?3 WHERE id = ?4",
+        params![duration_minutes, characters_read, date, id],
     )?;
     Ok(())
 }
@@ -790,12 +790,13 @@ mod tests {
             id: None, media_id, duration_minutes: 30.0, characters_read: 0, date: "2024-05-01".to_string(),
         }).unwrap();
 
-        update_log(&conn, log_id, 90.5, 1500).unwrap();
+        update_log(&conn, log_id, 90.5, 1500, "2024-05-15").unwrap();
 
         let logs = get_logs(&conn).unwrap();
         assert_eq!(logs.len(), 1);
         assert!((logs[0].duration_minutes - 90.5).abs() < 1e-9);
         assert_eq!(logs[0].characters_read, 1500);
+        assert_eq!(logs[0].date, "2024-05-15");
     }
 
     // ── clear_activities ─────────────────────────────────────────────────────
