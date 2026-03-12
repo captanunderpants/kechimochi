@@ -415,8 +415,8 @@ export class ActivityCharts extends Component<ActivityChartsState> {
                             label: function(context: any) {
                                 const val = context.parsed.y;
                                 return isCharsMetric
-                                    ? `${context.label}: ${val.toLocaleString()} 文字`
-                                    : `${context.label}: ${formatDuration(val)}`;
+                                    ? `${context.dataset.label}: ${val.toLocaleString()} 文字`
+                                    : `${context.dataset.label}: ${formatDuration(val)}`;
                             }
                         }
                     }
@@ -510,7 +510,7 @@ export class ActivityCharts extends Component<ActivityChartsState> {
                     legend: { display: false },
                     tooltip: {
                         callbacks: {
-                            label: (ctx: any) => `${ctx.parsed.y.toFixed(1)} hours`
+                            label: (ctx: any) => `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(1)} hours`
                         }
                     }
                 }
@@ -578,7 +578,7 @@ export class ActivityCharts extends Component<ActivityChartsState> {
                     legend: { display: false },
                     tooltip: {
                         callbacks: {
-                            label: (ctx: any) => `${ctx.label}: ${formatDuration(ctx.parsed.r)}`
+                            label: (ctx: any) => `${ctx.dataset.label}: ${formatDuration(ctx.parsed.r)}`
                         }
                     }
                 }
