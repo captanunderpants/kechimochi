@@ -8,9 +8,11 @@ interface MediaLogState {
 
 export class MediaLog extends Component<MediaLogState> {
     private onDeleteLog?: (id: number) => Promise<void>;
+    private isReading: boolean;
 
-    constructor(container: HTMLElement, logs: ActivitySummary[], onDeleteLog?: (id: number) => Promise<void>) {
+    constructor(container: HTMLElement, logs: ActivitySummary[], isReading: boolean, onDeleteLog?: (id: number) => Promise<void>) {
         super(container, { logs });
+        this.isReading = isReading;
         this.onDeleteLog = onDeleteLog;
     }
 
@@ -26,10 +28,18 @@ export class MediaLog extends Component<MediaLogState> {
 
         this.state.logs.forEach(log => {
             const charsHtml = log.characters_read > 0 ? ` <span style="color: var(--accent-yellow); font-size: 0.8rem; margin-left: 0.5rem;">(${log.characters_read.toLocaleString()} chars)</span>` : '';
+            
+            let speedHtml = '';
+            if (this.isReading && log.characters_read > 0 && log.duration_minutes > 0) {
+                const speed = log.characters_read / (log.duration_minutes / 60);
+                speedHtml = `<span style="color: var(--text-secondary); font-size: 0.8rem;">${Math.round(speed).toLocaleString()} chars/hr</span>`;
+            }
+
             const entry = html`
                 <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.5rem; border-bottom: 1px solid var(--border-color); font-size: 0.9rem;">
                     <span><span style="color: var(--text-secondary);">Activity:</span> ${formatDuration(log.duration_minutes)}${charsHtml}</span>
                     <div style="display: flex; align-items: center; gap: 0.75rem;">
+                        ${speedHtml}
                         <span style="color: var(--text-secondary);">${log.date}</span>
                         ${this.onDeleteLog ? `<button class="log-delete-btn" data-id="${log.id}" style="background: transparent; border: 1px solid #ff4757; color: #ff4757; border-radius: var(--radius-sm); padding: 0.15rem 0.4rem; font-size: 0.75rem; cursor: pointer; line-height: 1.4;">Del</button>` : ''}
                     </div>

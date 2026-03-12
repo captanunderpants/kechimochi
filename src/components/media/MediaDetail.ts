@@ -139,7 +139,7 @@ export class MediaDetail extends Component<MediaDetailState> {
                         </div>
 
                         <!-- Activity Logs -->
-                        <div class="card" style="margin-top: 1rem; flex: 1; display: flex; flex-direction: column; min-height: 200px;">
+                        <div class="card" style="margin-top: 1rem; flex: 1; display: flex; flex-direction: column; min-height: 500px;">
                             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
                                 <h4 style="margin: 0; color: var(--text-secondary);">Recent Activity</h4>
                                 <button class="btn btn-primary" id="btn-log-activity" style="font-size: 0.8rem; padding: 0.3rem 0.8rem;">Log Activity</button>
@@ -156,18 +156,19 @@ export class MediaDetail extends Component<MediaDetailState> {
         this.renderStats(detailView);
         
         const logsContainer = detailView.querySelector('#media-logs-container') as HTMLElement;
+        const isReading = isReadingContentType(media.content_type || '');
 
         const handleDeleteLog = async (logId: number) => {
             await deleteLog(logId);
             this.setState({ logs: this.state.logs.filter(l => l.id !== logId) });
             logsContainer.innerHTML = '';
-            new MediaLog(logsContainer, this.state.logs, handleDeleteLog).render();
+            new MediaLog(logsContainer, this.state.logs, isReading, handleDeleteLog).render();
             const statsDiv = detailView.querySelector('#media-personal-stats') as HTMLElement;
             if (statsDiv) { statsDiv.innerHTML = ''; statsDiv.style.display = 'none'; }
             await this.renderStats(detailView);
         };
 
-        new MediaLog(logsContainer, logs, handleDeleteLog).render();
+        new MediaLog(logsContainer, logs, isReading, handleDeleteLog).render();
     }
 
     private getContentTypeOptions(media: Media): string {
