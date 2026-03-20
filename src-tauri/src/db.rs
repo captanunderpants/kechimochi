@@ -119,7 +119,7 @@ fn migrate_content_types(conn: &Connection) -> Result<()> {
     let _ = conn.execute("UPDATE shared.media SET content_type = 'Light Novel' WHERE content_type = 'Novel'", []);
     let _ = conn.execute("UPDATE shared.media SET content_type = 'JRPG' WHERE content_type = 'Videogame'", []);
     // Derive media_type from content_type
-    let _ = conn.execute("UPDATE shared.media SET media_type = 'Reading' WHERE content_type IN ('Manga', 'Light Novel', 'Visual Novel', 'Book')", []);
+    let _ = conn.execute("UPDATE shared.media SET media_type = 'Reading' WHERE content_type IN ('Manga', 'Light Novel', 'Visual Novel', 'Book', 'Webnovel')", []);
     let _ = conn.execute("UPDATE shared.media SET media_type = 'Listening' WHERE content_type IN ('Anime', 'Audiobook', 'Podcast', 'JDrama', 'Youtube')", []);
     let _ = conn.execute("UPDATE shared.media SET media_type = 'Playing' WHERE content_type IN ('JRPG')", []);
     // Migrate Watching/None to Listening

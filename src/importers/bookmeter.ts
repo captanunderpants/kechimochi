@@ -3,7 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 
 export class BookmeterImporter implements MetadataImporter {
     name = "Bookmeter";
-    supportedContentTypes = ["Book", "Light Novel", "Audiobook"];
+    supportedContentTypes = ["Book", "Light Novel", "Audiobook", "Webnovel"];
     matchUrl(url: string, contentType: string): boolean {
         // We only allow Bookmeter urls for Novel
         return this.supportedContentTypes.includes(contentType) && url.includes("bookmeter.com/books/");

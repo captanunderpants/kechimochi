@@ -118,7 +118,7 @@ pub fn import_csv(conn: &mut Connection, file_path: &str) -> Result<usize, Strin
         // Derive broad media_type from content_type
         let content_type = record.media_type.clone();
         let media_type = match content_type.as_str() {
-            "Manga" | "Light Novel" | "Visual Novel" | "Book" => "Reading",
+            "Manga" | "Light Novel" | "Visual Novel" | "Book" | "Webnovel" => "Reading",
             "JRPG" => "Playing",
             "Anime" | "Audiobook" | "Podcast" | "JDrama" | "Youtube" => "Listening",
             other => other, // fallback: use as-is

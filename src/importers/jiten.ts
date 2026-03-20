@@ -4,7 +4,7 @@ import { invoke } from '@tauri-apps/api/core';
 
 export class JitenImporter implements MetadataImporter {
     name = "Jiten.moe";
-    supportedContentTypes = ["Anime", "Manga", "Light Novel", "Book", "Drama", "Videogame", "Visual Novel", "Movie", "Podcast", "JRPG"];
+    supportedContentTypes = ["Anime", "Manga", "Light Novel", "Book", "Webnovel", "Drama", "Videogame", "Visual Novel", "Movie", "Podcast", "JRPG"];
 
     matchUrl(url: string, contentType: string): boolean {
         if (!this.supportedContentTypes.includes(contentType)) return false;

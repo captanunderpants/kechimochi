@@ -53,8 +53,8 @@ export async function showExportCsvModal(): Promise<{mode: 'all' | 'range', star
     });
 }
 
-const CONTENT_TYPES = ['Anime', 'Manga', 'Light Novel', 'Visual Novel', 'Book', 'Audiobook', 'Podcast', 'JDrama', 'Youtube', 'JRPG'] as const;
-const READING_TYPES = ['Manga', 'Light Novel', 'Visual Novel', 'Book'];
+const CONTENT_TYPES = ['Anime', 'Manga', 'Light Novel', 'Visual Novel', 'Book', 'Webnovel', 'Audiobook', 'Podcast', 'JDrama', 'Youtube', 'JRPG'] as const;
+const READING_TYPES = ['Manga', 'Light Novel', 'Visual Novel', 'Book', 'Webnovel'];
 
 export function getMediaTypeForContentType(contentType: string): string {
     if (READING_TYPES.includes(contentType)) return 'Reading';

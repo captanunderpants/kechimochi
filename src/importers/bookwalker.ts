@@ -3,7 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 
 export class BookwalkerImporter implements MetadataImporter {
     name = "Bookwalker";
-    supportedContentTypes = ["Reading", "Manga"];
+    supportedContentTypes = ["Reading", "Manga", "Webnovel"];
     matchUrl(url: string, contentType: string): boolean {
         return this.supportedContentTypes.includes(contentType) && url.includes("bookwalker.jp/");
     }
