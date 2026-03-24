@@ -1,7 +1,7 @@
 import { Component } from '../core/component';
-import { html } from '../core/html';
-import { getLogs, getHeatmap, getAllMedia, ActivitySummary, DailyHeatmap, deleteLog, formatDuration } from '../api';
-import { customConfirm, showLogEditorModal } from '../modals';
+import { html, escapeHTML } from '../core/html';
+import { getLogs, getHeatmap, getAllMedia, ActivitySummary, DailyHeatmap, Media, deleteLog, formatDuration, readFileBytes } from '../api';
+import { customConfirm, showLogActivityModal, showLogEditorModal } from '../modals';
 import { StatsCard } from './dashboard/StatsCard';
 import { HeatmapView } from './dashboard/HeatmapView';
 import { ActivityCharts } from './dashboard/ActivityCharts';
@@ -9,7 +9,7 @@ import { ActivityCharts } from './dashboard/ActivityCharts';
 interface DashboardState {
     logs: ActivitySummary[];
     heatmapData: DailyHeatmap[];
-    mediaList: any[];
+    mediaList: Media[];
     currentHeatmapYear: number;
     chartParams: {
         timeRangeDays: number;
@@ -23,6 +23,7 @@ interface DashboardState {
 }
 
 export class Dashboard extends Component<DashboardState> {
+    private static quickLogImageCache: Map<string, string> = new Map();
     private activeChartsComponent: ActivityCharts | null = null;
     private loaded: boolean = false;
     private chartsContainerEl: HTMLElement | null = null;
@@ -106,6 +107,9 @@ export class Dashboard extends Component<DashboardState> {
             await this.loadData();
         }
 
+        const quickLogItems = this.getQuickLogItems();
+        const quickLogImages = await this.getQuickLogImages(quickLogItems);
+
         this.clear();
         const root = html`<div class="animate-fade-in" style="display: flex; flex-direction: column; gap: 2rem;"></div>`;
         this.container.appendChild(root);
@@ -129,7 +133,44 @@ export class Dashboard extends Component<DashboardState> {
         this.chartsContainerEl = chartsContainer;
         this.rerenderCharts();
 
-        // 3. Recent Logs Row
+        // 3. Quick Log Row
+        const quickLogCard = html`
+            <div class="card">
+                <div style="display: flex; justify-content: space-between; align-items: center; gap: 1rem; margin-bottom: 1rem;">
+                    <div>
+                        <h3 style="margin: 0;">Quick Log</h3>
+                        <p style="margin: 0.35rem 0 0; color: var(--text-secondary); font-size: 0.85rem;">Jump back into recently logged media.</p>
+                    </div>
+                </div>
+                <div class="dashboard-quick-log-strip" id="dashboard-quick-log-strip">
+                    ${quickLogItems.length > 0 ? quickLogItems.map(media => {
+                        const imageSrc = media.id ? quickLogImages.get(media.id) : null;
+                        const contentType = escapeHTML(media.content_type || media.media_type || 'Unknown');
+                        const title = escapeHTML(media.title);
+                        return `
+                            <button type="button" class="dashboard-quick-log-item" data-media-id="${media.id}">
+                                <div class="dashboard-quick-log-thumb${media.nsfw && imageSrc ? ' is-nsfw' : ''}">
+                                    ${imageSrc
+                                        ? `<img src="${imageSrc}" alt="${title}" />`
+                                        : `<div class="dashboard-quick-log-fallback"><span>${title}</span></div>`
+                                    }
+                                </div>
+                                <div class="dashboard-quick-log-meta">
+                                    <span class="dashboard-quick-log-title">${title}</span>
+                                    <span class="dashboard-quick-log-type">${contentType}</span>
+                                </div>
+                            </button>
+                        `;
+                    }).join('') : `
+                        <div class="dashboard-quick-log-empty">No recently logged media yet.</div>
+                    `}
+                </div>
+            </div>
+        `;
+        root.appendChild(quickLogCard);
+        this.setupQuickLogListeners(quickLogCard, quickLogItems);
+
+        // 4. Recent Logs Row
         const logsCard = html`
             <div class="card">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
@@ -151,8 +192,81 @@ export class Dashboard extends Component<DashboardState> {
         this.renderLogs(logsCard.querySelector('#recent-logs-list') as HTMLElement);
     }
 
+    private getSortedLogs(): ActivitySummary[] {
+        return [...this.state.logs].sort((a, b) => b.date.localeCompare(a.date) || b.id - a.id);
+    }
+
+    private getQuickLogItems(): Media[] {
+        const items: Media[] = [];
+        const seenMediaIds = new Set<number>();
+        const mediaById = new Map(this.state.mediaList.filter(media => media.id !== undefined).map(media => [media.id!, media]));
+
+        for (const log of this.getSortedLogs()) {
+            if (seenMediaIds.has(log.media_id)) continue;
+            const media = mediaById.get(log.media_id);
+            if (!media) continue;
+            seenMediaIds.add(log.media_id);
+            items.push(media);
+            if (items.length >= 12) break;
+        }
+
+        return items;
+    }
+
+    private async getQuickLogImages(items: Media[]): Promise<Map<number, string>> {
+        const imageMap = new Map<number, string>();
+
+        await Promise.all(items.map(async (media) => {
+            if (!media.id) return;
+            const coverPath = media.cover_image?.trim();
+            if (!coverPath) return;
+
+            const cached = Dashboard.quickLogImageCache.get(coverPath);
+            if (cached) {
+                imageMap.set(media.id, cached);
+                return;
+            }
+
+            try {
+                const bytes = await readFileBytes(coverPath);
+                const blob = new Blob([new Uint8Array(bytes)]);
+                const src = URL.createObjectURL(blob);
+                Dashboard.quickLogImageCache.set(coverPath, src);
+                imageMap.set(media.id, src);
+            } catch (error) {
+                console.error('Dashboard quick-log image failed to load', error);
+            }
+        }));
+
+        return imageMap;
+    }
+
+    private setupQuickLogListeners(card: HTMLElement, quickLogItems: Media[]): void {
+        const mediaById = new Map(quickLogItems.filter(media => media.id !== undefined).map(media => [media.id!, media]));
+
+        card.querySelectorAll('.dashboard-quick-log-item').forEach(button => {
+            button.addEventListener('click', async (event) => {
+                const mediaId = parseInt((event.currentTarget as HTMLElement).getAttribute('data-media-id') || '', 10);
+                if (Number.isNaN(mediaId)) return;
+
+                const media = mediaById.get(mediaId);
+                if (!media) return;
+
+                const logged = await showLogActivityModal({
+                    title: media.title,
+                    contentType: media.content_type || undefined
+                });
+
+                if (logged) {
+                    await this.loadData();
+                    await this.render();
+                }
+            });
+        });
+    }
+
     private renderLogs(list: HTMLElement) {
-        const { logs } = this.state;
+        const logs = this.getSortedLogs();
         const currentProfile = localStorage.getItem('kechimochi_profile') || 'default';
 
         if (logs.length === 0) {

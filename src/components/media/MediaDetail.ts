@@ -21,6 +21,10 @@ export class MediaDetail extends Component<MediaDetailState> {
     private onDelete: () => void;
     private mediaList: Media[];
     private currentIndex: number;
+    private isCoverRevealed: boolean;
+    private isLightboxOpen: boolean = false;
+    private lightboxOverlay: HTMLElement | null = null;
+    private coverClickTimeout: ReturnType<typeof setTimeout> | null = null;
 
     constructor(container: HTMLElement, media: Media, logs: ActivitySummary[], mediaList: Media[], currentIndex: number, callbacks: { onBack: () => void, onNext: () => void, onPrev: () => void, onNavigate: (index: number) => void, onDelete: () => void }) {
         super(container, { media, logs, imgSrc: null });
@@ -31,6 +35,8 @@ export class MediaDetail extends Component<MediaDetailState> {
         this.onPrev = callbacks.onPrev;
         this.onNavigate = callbacks.onNavigate;
         this.onDelete = callbacks.onDelete;
+        this.isCoverRevealed = !media.nsfw;
+        window.addEventListener('keydown', this.handleGlobalKeydown, true);
         this.loadImage();
     }
 
@@ -60,9 +66,85 @@ export class MediaDetail extends Component<MediaDetailState> {
         }
     }
 
+    private shouldBlurCover(): boolean {
+        return this.state.media.nsfw && !this.isCoverRevealed;
+    }
+
+    private getCoverTitle(imgSrc: string | null): string {
+        if (!imgSrc) return 'Double click to add image';
+        if (!this.state.media.nsfw) return 'Left click to expand image. Double click to change image';
+        if (this.isCoverRevealed) return 'Left click to expand image. Right click to hide cover. Double click to change image';
+        return 'Right click to reveal cover. Double click to change image';
+    }
+
+    private clearCoverClickTimeout(): void {
+        if (this.coverClickTimeout !== null) {
+            clearTimeout(this.coverClickTimeout);
+            this.coverClickTimeout = null;
+        }
+    }
+
+    private handleGlobalKeydown = (event: KeyboardEvent): void => {
+        if (event.key === 'Escape' && this.isLightboxOpen) {
+            event.preventDefault();
+            event.stopPropagation();
+            this.closeLightbox();
+        }
+    };
+
+    private syncLightbox(): void {
+        if (!this.isLightboxOpen || !this.state.imgSrc) {
+            if (this.lightboxOverlay) {
+                this.lightboxOverlay.remove();
+                this.lightboxOverlay = null;
+            }
+            return;
+        }
+
+        if (!this.lightboxOverlay) {
+            const overlay = document.createElement('div');
+            overlay.className = 'media-lightbox-overlay';
+
+            const content = document.createElement('div');
+            content.className = 'media-lightbox-content';
+            content.addEventListener('click', (event) => event.stopPropagation());
+
+            const image = document.createElement('img');
+            image.className = 'media-lightbox-image';
+
+            content.appendChild(image);
+            overlay.appendChild(content);
+            overlay.addEventListener('click', () => this.closeLightbox());
+
+            document.body.appendChild(overlay);
+            this.lightboxOverlay = overlay;
+        }
+
+        const lightboxImage = this.lightboxOverlay.querySelector('img') as HTMLImageElement | null;
+        if (lightboxImage) {
+            lightboxImage.src = this.state.imgSrc;
+            lightboxImage.alt = `${this.state.media.title} cover`;
+        }
+    }
+
+    private openLightbox(): void {
+        if (!this.state.imgSrc) return;
+        if (this.state.media.nsfw && !this.isCoverRevealed) return;
+        this.isLightboxOpen = true;
+        this.syncLightbox();
+    }
+
+    private closeLightbox(): void {
+        if (!this.isLightboxOpen && !this.lightboxOverlay) return;
+        this.isLightboxOpen = false;
+        this.syncLightbox();
+    }
+
     async render() {
         this.clear();
         const { media, imgSrc, logs } = this.state;
+        const shouldBlurCover = this.shouldBlurCover();
+        const coverTitle = this.getCoverTitle(imgSrc);
 
         const detailView = html`
             <div class="animate-fade-in" style="display: flex; flex-direction: column; height: 100%; gap: 1rem;" id="media-root">
@@ -87,8 +169,8 @@ export class MediaDetail extends Component<MediaDetailState> {
                     <!-- Left Column: Cover -->
                     <div style="flex: 0 0 300px; display: flex; flex-direction: column;">
                         ${imgSrc 
-                            ? html`<img src="${imgSrc}" style="width: 100%; aspect-ratio: 2/3; object-fit: cover; border-radius: var(--radius-md); cursor: pointer;${media.nsfw ? ' filter: blur(20px); transition: filter 0.2s;' : ''}" id="media-cover-img" alt="Cover" title="Double click to change image" />`
-                            : html`<div style="width: 100%; aspect-ratio: 2/3; background: var(--bg-dark); border: 2px dashed var(--border-color); border-radius: var(--radius-md); display: flex; align-items: center; justify-content: center; cursor: pointer; color: var(--text-secondary);" id="media-cover-img" title="Double click to add image">No Image</div>`
+                            ? html`<img src="${imgSrc}" style="width: 100%; aspect-ratio: 2/3; object-fit: cover; border-radius: var(--radius-md); cursor: pointer; transition: filter 0.2s;${shouldBlurCover ? ' filter: blur(20px);' : ''}" id="media-cover-img" alt="Cover" title="${coverTitle}" />`
+                            : html`<div style="width: 100%; aspect-ratio: 2/3; background: var(--bg-dark); border: 2px dashed var(--border-color); border-radius: var(--radius-md); display: flex; align-items: center; justify-content: center; cursor: pointer; color: var(--text-secondary);" id="media-cover-img" title="${coverTitle}">No Image</div>`
                         }
                         <div style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border-color); display: flex; flex-direction: column; gap: 0.5rem;">
                             <button class="btn" id="btn-delete-media-detail" style="background-color: #ff4757; color: white; border: none; font-weight: bold; width: 100%; padding: 0.6rem; font-size: 0.9rem;">Delete Media</button>
@@ -169,6 +251,7 @@ export class MediaDetail extends Component<MediaDetailState> {
         };
 
         new MediaLog(logsContainer, logs, isReading, handleDeleteLog).render();
+        this.syncLightbox();
     }
 
     private getContentTypeOptions(media: Media): string {
@@ -293,7 +376,21 @@ export class MediaDetail extends Component<MediaDetailState> {
         root.querySelector('#media-prev')?.addEventListener('click', this.onPrev);
         root.querySelector('#media-select')?.addEventListener('change', (e) => this.onNavigate(parseInt((e.target as HTMLSelectElement).value)));
 
-        root.querySelector('#media-cover-img')?.addEventListener('dblclick', async () => {
+        const coverImgEl = root.querySelector('#media-cover-img') as HTMLElement | null;
+
+        coverImgEl?.addEventListener('click', () => {
+            if (!this.state.imgSrc) return;
+            if (this.state.media.nsfw && !this.isCoverRevealed) return;
+
+            this.clearCoverClickTimeout();
+            this.coverClickTimeout = setTimeout(() => {
+                this.coverClickTimeout = null;
+                this.openLightbox();
+            }, 220);
+        });
+
+        coverImgEl?.addEventListener('dblclick', async () => {
+            this.clearCoverClickTimeout();
             const selected = await open({
                 multiple: false,
                 filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp'] }]
@@ -394,7 +491,10 @@ export class MediaDetail extends Component<MediaDetailState> {
         });
 
         root.querySelector('#btn-toggle-nsfw')?.addEventListener('click', async () => {
-            this.state.media.nsfw = !this.state.media.nsfw;
+            const nextNsfw = !this.state.media.nsfw;
+            this.state.media.nsfw = nextNsfw;
+            this.isCoverRevealed = !nextNsfw;
+            if (nextNsfw) this.closeLightbox();
             await updateMedia(this.state.media);
             this.render();
         });
@@ -409,13 +509,14 @@ export class MediaDetail extends Component<MediaDetailState> {
         });
 
         // Right-click to toggle reveal NSFW cover
-        const coverImg = root.querySelector('#media-cover-img') as HTMLElement;
+        const coverImg = root.querySelector('#media-cover-img') as HTMLElement | null;
         if (coverImg && this.state.media.nsfw) {
-            let revealed = false;
             coverImg.addEventListener('contextmenu', (e) => {
                 e.preventDefault();
-                revealed = !revealed;
-                coverImg.style.filter = revealed ? 'none' : 'blur(20px)';
+                this.clearCoverClickTimeout();
+                this.isCoverRevealed = !this.isCoverRevealed;
+                coverImg.style.filter = this.shouldBlurCover() ? 'blur(20px)' : 'none';
+                coverImg.title = this.getCoverTitle(this.state.imgSrc);
             });
         }
 
@@ -510,5 +611,11 @@ export class MediaDetail extends Component<MediaDetailState> {
         } catch (e) {
             alert("Metadata import failed: " + e);
         }
+    }
+
+    public destroy(): void {
+        this.clearCoverClickTimeout();
+        this.closeLightbox();
+        window.removeEventListener('keydown', this.handleGlobalKeydown, true);
     }
 }
