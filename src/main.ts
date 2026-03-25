@@ -12,6 +12,21 @@ import {
 import { getCurrentWindow } from '@tauri-apps/api/window';
 
 const appWindow = getCurrentWindow();
+const THEME_CACHE_PREFIX = 'kechimochi_theme_';
+
+function getThemeCacheKey(profileName: string): string {
+    return `${THEME_CACHE_PREFIX}${profileName}`;
+}
+
+function applyCachedTheme(profileName: string | null): void {
+    if (!profileName) return;
+    const cachedTheme = localStorage.getItem(getThemeCacheKey(profileName));
+    if (cachedTheme) {
+        document.body.dataset.theme = cachedTheme;
+    }
+}
+
+applyCachedTheme(localStorage.getItem('kechimochi_profile'));
 
 class App {
     private currentView: 'dashboard' | 'media' | 'profile' = 'dashboard';
@@ -74,6 +89,7 @@ class App {
         this.selectProfileEl.addEventListener('change', async () => {
             this.currentProfile = this.selectProfileEl.value;
             localStorage.setItem('kechimochi_profile', this.currentProfile);
+            applyCachedTheme(this.currentProfile);
             await switchProfile(this.currentProfile);
             await this.loadTheme();
             this.renderCurrentView();
@@ -84,6 +100,7 @@ class App {
             if (newProfile && newProfile.trim() !== '') {
                 this.currentProfile = newProfile.trim();
                 localStorage.setItem('kechimochi_profile', this.currentProfile);
+                applyCachedTheme(this.currentProfile);
                 await switchProfile(this.currentProfile);
                 await this.loadTheme();
                 await this.ensureProfilesList();
@@ -103,6 +120,7 @@ class App {
                 const updatedProfiles = await listProfiles();
                 this.currentProfile = updatedProfiles.length > 0 ? updatedProfiles[0] : 'default';
                 localStorage.setItem('kechimochi_profile', this.currentProfile);
+                applyCachedTheme(this.currentProfile);
                 await switchProfile(this.currentProfile);
                 await this.loadTheme();
                 await this.ensureProfilesList();
@@ -159,6 +177,9 @@ class App {
     private async loadTheme() {
         const theme = await getSetting('theme') || 'pastel-pink';
         document.body.dataset.theme = theme;
+        if (this.currentProfile) {
+            localStorage.setItem(getThemeCacheKey(this.currentProfile), theme);
+        }
     }
 
     private switchView(view: 'dashboard' | 'media' | 'profile') {

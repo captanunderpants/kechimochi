@@ -2,6 +2,7 @@ import { Component } from '../core/component';
 import { html, escapeHTML } from '../core/html';
 import { getLogs, getHeatmap, getAllMedia, ActivitySummary, DailyHeatmap, Media, deleteLog, formatDuration, readFileBytes } from '../api';
 import { customConfirm, showLogActivityModal, showLogEditorModal } from '../modals';
+import { isReadingContentType } from '../modals/activity';
 import { StatsCard } from './dashboard/StatsCard';
 import { HeatmapView } from './dashboard/HeatmapView';
 import { ActivityCharts } from './dashboard/ActivityCharts';
@@ -205,6 +206,7 @@ export class Dashboard extends Component<DashboardState> {
             if (seenMediaIds.has(log.media_id)) continue;
             const media = mediaById.get(log.media_id);
             if (!media) continue;
+            if (media.tracking_status !== 'Ongoing') continue;
             seenMediaIds.add(log.media_id);
             items.push(media);
             if (items.length >= 12) break;
@@ -282,6 +284,7 @@ export class Dashboard extends Component<DashboardState> {
                     <span>${formatDuration(log.duration_minutes)}</span> 
                     <span style="color: var(--text-secondary);">of ${log.media_type}</span> 
                     <a class="dashboard-media-link" data-media-id="${log.media_id}" style="color: var(--text-primary); font-weight: 600; cursor: pointer; text-decoration: underline; text-decoration-color: var(--accent-blue);">${log.title}</a>
+                    ${this.getRecentLogReadingStats(log)}
                 </div>
                 <div style="display: flex; align-items: center; gap: 1rem;">
                     <div style="color: var(--text-secondary);">${log.date}</div>
@@ -308,5 +311,24 @@ export class Dashboard extends Component<DashboardState> {
                 window.dispatchEvent(new CustomEvent('app-navigate', { detail: { view: 'media', focusMediaId: mediaId } }));
             });
         });
+    }
+
+    private getRecentLogReadingStats(log: ActivitySummary): string {
+        if (!isReadingContentType(log.content_type || '')) return '';
+
+        const pieces = [
+            `<span style="color: var(--text-secondary);">•</span>`,
+            `<span style="color: var(--accent-yellow); font-weight: 600;">${log.characters_read.toLocaleString()} chars</span>`
+        ];
+
+        if (log.characters_read > 0 && log.duration_minutes > 0) {
+            const readingSpeed = Math.round(log.characters_read / (log.duration_minutes / 60));
+            pieces.push(
+                `<span style="color: var(--text-secondary);">•</span>`,
+                `<span style="color: var(--accent-purple); font-weight: 600;">${readingSpeed.toLocaleString()} 文字/hour</span>`
+            );
+        }
+
+        return ` ${pieces.join(' ')}`;
     }
 }

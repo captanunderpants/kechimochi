@@ -165,6 +165,7 @@ export class ProfileView extends Component<ProfileState> {
         root.querySelector('#profile-select-theme')?.addEventListener('change', async (e) => {
             const theme = (e.target as HTMLSelectElement).value;
             await setSetting('theme', theme);
+            localStorage.setItem(`kechimochi_theme_${currentProfile}`, theme);
             document.body.dataset.theme = theme;
             this.setState({ theme });
         });
