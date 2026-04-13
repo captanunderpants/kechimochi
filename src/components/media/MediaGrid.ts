@@ -73,7 +73,7 @@ export class MediaGrid extends Component<MediaGridState> {
                         <option value="default" ${this.state.sortBy === 'default' ? 'selected' : ''}>Sort: Recent</option>
                         <option value="title" ${this.state.sortBy === 'title' ? 'selected' : ''}>Sort: Title</option>
                         <option value="time" ${this.state.sortBy === 'time' ? 'selected' : ''}>Sort: Time</option>
-                        <option value="chars" ${this.state.sortBy === 'chars' ? 'selected' : ''}>Sort: Chars Read</option>
+                        <option value="chars" ${this.state.sortBy === 'chars' ? 'selected' : ''}>Sort: 文字</option>
                         <option value="speed" ${this.state.sortBy === 'speed' ? 'selected' : ''}>Sort: Speed</option>
                         <option value="finished" ${this.state.sortBy === 'finished' ? 'selected' : ''}>Sort: Finished</option>
                     </select>

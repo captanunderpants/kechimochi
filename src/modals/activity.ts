@@ -101,7 +101,7 @@ export async function showLogActivityModal(prefill?: { title?: string, contentTy
                         </select>
                     </div>
                     <div id="characters-read-container" style="display: ${prefillIsReading ? 'flex' : 'none'}; flex-direction: column; gap: 0.5rem;">
-                        <label style="font-size: 0.85rem; color: var(--text-secondary);">Characters Read</label>
+                        <label style="font-size: 0.85rem; color: var(--text-secondary);">文字</label>
                         <input type="number" id="activity-characters-read" min="0" step="1" style="background: var(--bg-dark); color: var(--text-primary); border: 1px solid var(--border-color); padding: 0.5rem; border-radius: var(--radius-sm);" />
                     </div>
                     <div id="episodes-container" style="display: ${prefillIsAnime ? 'flex' : 'none'}; flex-direction: column; gap: 0.5rem;">

@@ -334,7 +334,7 @@ export class MediaDetail extends Component<MediaDetailState> {
             cards.push(statCard("Episodes Watched", episodes.toLocaleString(), "var(--accent-green)"));
         }
         if (isReading) {
-            cards.push(statCard("Total Characters Read", totalCharsRead.toLocaleString(), "var(--accent-green)"));
+            cards.push(statCard("Total 文字", totalCharsRead.toLocaleString(), "var(--accent-green)"));
         }
         cards.push(statCard(`Total Time ${verb}`, totalStr, "var(--accent-blue, #3b82f6)"));
         if (isReading && readingSpeed > 0) {

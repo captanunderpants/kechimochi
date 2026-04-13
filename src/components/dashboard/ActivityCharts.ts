@@ -1,5 +1,5 @@
 import { Component } from '../../core/component';
-import { html } from '../../core/html';
+import { escapeHTML, html } from '../../core/html';
 import { ActivitySummary, formatDuration } from '../../api';
 import { isReadingContentType } from '../../modals/activity';
 import Chart from 'chart.js/auto';
@@ -13,15 +13,29 @@ interface ActivityChartsState {
     charsGroupByMode: 'media_type' | 'log_name';
     chartType: 'bar' | 'line';
     barMetric: 'time' | 'chars';
+    monthlyStatsYear: number;
+    categoryTableRangeMode: 'daily' | 'weekly' | 'monthly' | 'all_time';
+    categoryTableRangeOffset: number;
+}
+
+interface TimeRangeContext {
+    validStart: string;
+    validEnd: string;
+    labels: string[];
+    displayLabels: string[];
+    getBucketIndex: (dateStr: string) => number;
+}
+
+interface CategoryTableRangeContext {
+    validStart: string;
+    validEnd: string;
+    rangeLabel: string;
 }
 
 export class ActivityCharts extends Component<ActivityChartsState> {
     private pieChartInstance: Chart | null = null;
     private charsChartInstance: Chart | null = null;
     private barChartInstance: Chart | null = null;
-    private cumulativeChartInstance: Chart | null = null;
-    private radarChartInstance: Chart | null = null;
-    private speedChartInstance: Chart | null = null;
     private onChartParamChange: (params: Partial<ActivityChartsState>) => void;
 
     constructor(container: HTMLElement, initialState: ActivityChartsState, onChartParamChange: (params: Partial<ActivityChartsState>) => void) {
@@ -31,85 +45,150 @@ export class ActivityCharts extends Component<ActivityChartsState> {
 
     render() {
         this.clear();
-        
+
+        const monthlyStats = this.getMonthlyStatsRows(this.state.monthlyStatsYear);
+        const currentYear = new Date().getFullYear();
+        const earliestLogYear = this.getEarliestLogYear();
+        const canGoToPrevMonthlyYear = this.state.monthlyStatsYear > earliestLogYear;
+        const canGoToNextMonthlyYear = this.state.monthlyStatsYear < currentYear;
+        const categoryTable = this.getCategoryTableData();
+
         const chartsLayout = html`
-            <div style="display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 2fr); gap: 2rem;">
-                <div class="card" style="display: flex; flex-direction: column; min-width: 0;">
-                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
-                        <h3 style="margin: 0;">Activity Breakdown</h3>
-                        <button class="btn btn-ghost btn-cycle" id="btn-pie-toggle" style="font-size: 0.75rem; padding: 0.2rem 0.5rem;">${this.state.pieGroupByMode === 'media_type' ? 'By Type' : 'By Media'}</button>
-                    </div>
-                    <div class="chart-container-wrapper" style="flex: 1; min-height: 0;">
-                        <canvas id="pieChart"></canvas>
-                    </div>
-                    <div id="pie-total" style="text-align: center; margin-top: 0.5rem; font-size: 0.85rem; font-weight: 600; color: var(--text-secondary);"></div>
-                </div>
-                <div class="card" style="display: flex; flex-direction: column; min-width: 0;">
-                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
-                        <h3 style="margin: 0; font-size: 0.95rem;">Characters Read</h3>
-                        <button class="btn btn-ghost btn-cycle" id="btn-chars-toggle" style="font-size: 0.75rem; padding: 0.2rem 0.5rem;">${this.state.charsGroupByMode === 'media_type' ? 'By Type' : 'By Media'}</button>
-                    </div>
-                    <div class="chart-container-wrapper" style="flex: 1; min-height: 0;">
-                        <canvas id="charsChart"></canvas>
-                    </div>
-                    <div id="chars-total" style="text-align: center; margin-top: 0.5rem; font-size: 0.85rem; font-weight: 600; color: var(--text-secondary);"></div>
-                </div>
-                <div class="card" style="display: flex; flex-direction: column; min-width: 0;">
-                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
-                        <div style="display: flex; align-items: center; gap: 0.5rem;">
-                            <button class="btn btn-ghost" style="padding: 0.1rem 0.4rem; ${this.state.timeRangeDays === 0 ? 'opacity: 0.3; cursor: default;' : ''}" id="btn-chart-prev">&lt;</button>
-                            <h3 style="margin: 0;">Activity visualization</h3>
-                            <button class="btn btn-ghost" style="padding: 0.1rem 0.4rem; ${this.state.timeRangeOffset === 0 || this.state.timeRangeDays === 0 ? 'opacity: 0.3; cursor: default;' : ''}" id="btn-chart-next">&gt;</button>
+            <div style="display: flex; flex-direction: column; gap: 1.25rem;">
+                <div class="dashboard-top-analytics-row">
+                    <div class="card dashboard-activity-hero-card">
+                        <div style="display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap; margin-bottom: 1rem;">
+                            <div style="display: flex; align-items: center; gap: 0.5rem;">
+                                <button class="btn btn-ghost" style="padding: 0.1rem 0.4rem; ${this.state.timeRangeDays === 0 ? 'opacity: 0.3; cursor: default;' : ''}" id="btn-chart-prev">&lt;</button>
+                                <h3 style="margin: 0;">Activity Visualization</h3>
+                                <button class="btn btn-ghost" style="padding: 0.1rem 0.4rem; ${this.state.timeRangeOffset === 0 || this.state.timeRangeDays === 0 ? 'opacity: 0.3; cursor: default;' : ''}" id="btn-chart-next">&gt;</button>
+                            </div>
+                            <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+                                <button class="btn btn-ghost btn-cycle" id="btn-bar-metric" style="font-size: 0.8rem; padding: 0.3rem 0.6rem;">${this.state.barMetric === 'time' ? 'Time' : '文字'}</button>
+                                <button class="btn btn-ghost btn-cycle" id="btn-chart-type" style="font-size: 0.8rem; padding: 0.3rem 0.6rem;">${this.state.chartType === 'bar' ? 'Bar' : 'Line'}</button>
+                                <button class="btn btn-ghost btn-cycle" id="btn-time-range" style="font-size: 0.8rem; padding: 0.3rem 0.6rem;">${this.state.timeRangeDays === 7 ? 'Weekly' : this.state.timeRangeDays === 30 ? 'Monthly' : this.state.timeRangeDays === 365 ? 'Yearly' : 'All Time'}</button>
+                                <button class="btn btn-ghost btn-cycle" id="btn-group-by" style="font-size: 0.8rem; padding: 0.3rem 0.6rem;">${this.state.groupByMode === 'media_type' ? 'By Type' : 'By Media'}</button>
+                            </div>
                         </div>
-                        <div style="display: flex; gap: 0.5rem;">
-                            <button class="btn btn-ghost btn-cycle" id="btn-bar-metric" style="font-size: 0.8rem; padding: 0.3rem 0.6rem;">${this.state.barMetric === 'time' ? 'Time' : '文字'}</button>
-                            <button class="btn btn-ghost btn-cycle" id="btn-chart-type" style="font-size: 0.8rem; padding: 0.3rem 0.6rem;">${this.state.chartType === 'bar' ? 'Bar' : 'Line'}</button>
-                            <button class="btn btn-ghost btn-cycle" id="btn-time-range" style="font-size: 0.8rem; padding: 0.3rem 0.6rem;">${this.state.timeRangeDays === 7 ? 'Weekly' : this.state.timeRangeDays === 30 ? 'Monthly' : this.state.timeRangeDays === 365 ? 'Yearly' : 'All Time'}</button>
-                            <button class="btn btn-ghost btn-cycle" id="btn-group-by" style="font-size: 0.8rem; padding: 0.3rem 0.6rem;">${this.state.groupByMode === 'media_type' ? 'By Type' : 'By Media'}</button>
+                        <div class="chart-container-wrapper" style="height: 380px;">
+                            <canvas id="barChart"></canvas>
                         </div>
                     </div>
-                    <div class="chart-container-wrapper" style="flex: 1; min-height: 0;">
-                        <canvas id="barChart"></canvas>
+
+                    <div class="card dashboard-monthly-stats-card">
+                        <div class="dashboard-monthly-stats-header">
+                            <div style="display: flex; align-items: center; gap: 0.45rem;">
+                                <button class="btn btn-ghost" style="padding: 0.1rem 0.4rem; ${!canGoToPrevMonthlyYear ? 'opacity: 0.3; cursor: default;' : ''}" id="btn-monthly-prev">&lt;</button>
+                                <h3 style="margin: 0;">Monthly Stats</h3>
+                                <button class="btn btn-ghost" style="padding: 0.1rem 0.4rem; ${!canGoToNextMonthlyYear ? 'opacity: 0.3; cursor: default;' : ''}" id="btn-monthly-next">&gt;</button>
+                            </div>
+                            <span class="dashboard-monthly-stats-year">${this.state.monthlyStatsYear}</span>
+                        </div>
+                        <div class="dashboard-table-scroll dashboard-monthly-table-wrap">
+                            <table class="dashboard-data-table dashboard-monthly-table dashboard-monthly-table-compact">
+                                <thead>
+                                    <tr>
+                                        <th>Month</th>
+                                        <th>文字</th>
+                                        <th>Hours</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    ${monthlyStats.rows.map((row) => `
+                                        <tr>
+                                            <td>${row.label}</td>
+                                            <td>${row.chars.toLocaleString()}</td>
+                                            <td>${this.formatDecimalHours(row.minutes)}</td>
+                                        </tr>
+                                    `).join('')}
+                                </tbody>
+                                <tfoot>
+                                    <tr>
+                                        <td>Total</td>
+                                        <td>${monthlyStats.totalChars.toLocaleString()}</td>
+                                        <td>${this.formatDecimalHours(monthlyStats.totalMinutes)}</td>
+                                    </tr>
+                                </tfoot>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="dashboard-small-charts-grid">
+                    <div class="card" style="display: flex; flex-direction: column; min-width: 0;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                            <h3 style="margin: 0;">Activity Breakdown</h3>
+                            <button class="btn btn-ghost btn-cycle" id="btn-pie-toggle" style="font-size: 0.75rem; padding: 0.2rem 0.5rem;">${this.state.pieGroupByMode === 'media_type' ? 'By Type' : 'By Media'}</button>
+                        </div>
+                        <div class="chart-container-wrapper" style="height: 260px;">
+                            <canvas id="pieChart"></canvas>
+                        </div>
+                        <div id="pie-total" style="text-align: center; margin-top: 0.5rem; font-size: 0.85rem; font-weight: 600; color: var(--text-secondary);"></div>
+                    </div>
+
+                    <div class="card" style="display: flex; flex-direction: column; min-width: 0;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                            <h3 style="margin: 0; font-size: 0.95rem;">文字</h3>
+                            <button class="btn btn-ghost btn-cycle" id="btn-chars-toggle" style="font-size: 0.75rem; padding: 0.2rem 0.5rem;">${this.state.charsGroupByMode === 'media_type' ? 'By Type' : 'By Media'}</button>
+                        </div>
+                        <div class="chart-container-wrapper" style="height: 260px;">
+                            <canvas id="charsChart"></canvas>
+                        </div>
+                        <div id="chars-total" style="text-align: center; margin-top: 0.5rem; font-size: 0.85rem; font-weight: 600; color: var(--text-secondary);"></div>
+                    </div>
+
+                    <div class="card dashboard-category-table-card">
+                        <div class="dashboard-category-table-header">
+                            <div style="display: flex; align-items: center; gap: 0.45rem;">
+                                <button class="btn btn-ghost" style="padding: 0.1rem 0.4rem; ${!categoryTable.canGoPrev ? 'opacity: 0.3; cursor: default;' : ''}" id="btn-category-table-prev">&lt;</button>
+                                <h3 style="margin: 0; font-size: 0.95rem;">Categories</h3>
+                                <button class="btn btn-ghost" style="padding: 0.1rem 0.4rem; ${!categoryTable.canGoNext ? 'opacity: 0.3; cursor: default;' : ''}" id="btn-category-table-next">&gt;</button>
+                            </div>
+                            <div style="display: flex; align-items: center; gap: 0.45rem; flex-wrap: wrap; justify-content: flex-end;">
+                                <span class="dashboard-category-table-range-label">${categoryTable.rangeLabel}</span>
+                                <button class="btn btn-ghost btn-cycle" id="btn-category-table-range" style="font-size: 0.75rem; padding: 0.2rem 0.5rem;">${this.getCategoryTableRangeModeLabel(this.state.categoryTableRangeMode)}</button>
+                            </div>
+                        </div>
+                        <div class="dashboard-table-scroll dashboard-category-table-wrap">
+                            <table class="dashboard-data-table dashboard-category-table">
+                                <thead>
+                                    <tr>
+                                        <th>Title</th>
+                                        <th>文字</th>
+                                        <th>Hours</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    ${categoryTable.rows.length > 0 ? categoryTable.rows.map((row) => `
+                                        <tr>
+                                            <td>${escapeHTML(row.title)}</td>
+                                            <td>${row.showChars ? row.chars.toLocaleString() : ''}</td>
+                                            <td>${this.formatDecimalHours(row.minutes)}</td>
+                                        </tr>
+                                    `).join('') : `
+                                        <tr>
+                                            <td colspan="3" class="dashboard-category-table-empty">No activity in this period</td>
+                                        </tr>
+                                    `}
+                                </tbody>
+                            </table>
+                        </div>
+                        <div style="text-align: center; margin-top: 0.5rem; font-size: 0.85rem; font-weight: 600; color: var(--text-secondary);">
+                            Total: ${categoryTable.totalChars.toLocaleString()} 文字 / ${this.formatDecimalHours(categoryTable.totalMinutes)} hr
+                        </div>
                     </div>
                 </div>
             </div>
         `;
 
         this.container.appendChild(chartsLayout);
-
-        const bottomRow = html`
-            <div style="display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr); gap: 2rem; margin-top: 2rem;">
-                <div class="card" style="display: flex; flex-direction: column; min-width: 0;">
-                    <h3 style="text-align: center; margin-bottom: 1rem; font-size: 0.95rem;">Cumulative Hours</h3>
-                    <div class="chart-container-wrapper" style="flex: 1; min-height: 0;">
-                        <canvas id="cumulativeChart"></canvas>
-                    </div>
-                </div>
-                <div class="card" style="display: flex; flex-direction: column; min-width: 0;">
-                    <h3 style="text-align: center; margin-bottom: 1rem; font-size: 0.95rem;">Activity by Day of Week</h3>
-                    <div class="chart-container-wrapper" style="flex: 1; min-height: 0;">
-                        <canvas id="radarChart"></canvas>
-                    </div>
-                </div>
-                <div class="card" style="display: flex; flex-direction: column; min-width: 0;">
-                    <h3 style="text-align: center; margin-bottom: 1rem; font-size: 0.95rem;">Reading Speed Over Time</h3>
-                    <div class="chart-container-wrapper" style="flex: 1; min-height: 0;">
-                        <canvas id="speedChart"></canvas>
-                    </div>
-                </div>
-            </div>
-        `;
-        this.container.appendChild(bottomRow);
-
         this.setupListeners(chartsLayout);
         this.renderCharts(chartsLayout);
-        this.renderBottomCharts(bottomRow);
     }
 
     private setupListeners(layout: HTMLElement) {
         const { logs, timeRangeDays, timeRangeOffset } = this.state;
 
-        // Find earliest log date to determine left arrow bound
         let earliestDate = '';
         for (const log of logs) {
             if (!earliestDate || log.date < earliestDate) earliestDate = log.date;
@@ -117,12 +196,10 @@ export class ActivityCharts extends Component<ActivityChartsState> {
 
         const prevBtn = layout.querySelector('#btn-chart-prev') as HTMLElement | null;
 
-        // Check if going back one more would be past the earliest data
         if (prevBtn && earliestDate) {
             const today = new Date();
             let wouldBeEmpty = false;
             if (timeRangeDays === 0) {
-                // All Time: no navigation
                 wouldBeEmpty = true;
             } else if (timeRangeDays === 7) {
                 const endDay = new Date(today);
@@ -131,14 +208,12 @@ export class ActivityCharts extends Component<ActivityChartsState> {
                 const dow = endDay.getDay();
                 const diff = dow === 0 ? 6 : dow - 1;
                 startDay.setDate(endDay.getDate() - diff);
-                const pad = (n: number) => n.toString().padStart(2, '0');
-                const endStr = `${startDay.getFullYear()}-${pad(startDay.getMonth() + 1)}-${pad(startDay.getDate())}`;
+                const endStr = this.getLocalISODate(startDay);
                 wouldBeEmpty = earliestDate > endStr;
             } else if (timeRangeDays === 30) {
                 const targetMonth = new Date(today.getFullYear(), today.getMonth() - (timeRangeOffset + 1), 1);
                 const endOfMonth = new Date(targetMonth.getFullYear(), targetMonth.getMonth() + 1, 0);
-                const pad = (n: number) => n.toString().padStart(2, '0');
-                const endStr = `${endOfMonth.getFullYear()}-${pad(endOfMonth.getMonth() + 1)}-${pad(endOfMonth.getDate())}`;
+                const endStr = this.getLocalISODate(endOfMonth);
                 wouldBeEmpty = earliestDate > endStr;
             } else if (timeRangeDays === 365) {
                 const targetYear = today.getFullYear() - (timeRangeOffset + 1);
@@ -155,148 +230,106 @@ export class ActivityCharts extends Component<ActivityChartsState> {
                 this.onChartParamChange({ timeRangeOffset: this.state.timeRangeOffset + 1 });
             }
         });
+
         layout.querySelector('#btn-chart-next')?.addEventListener('click', () => {
             if (this.state.timeRangeOffset > 0 && this.state.timeRangeDays !== 0) {
                 this.onChartParamChange({ timeRangeOffset: this.state.timeRangeOffset - 1 });
             }
         });
+
         layout.querySelector('#btn-chart-type')?.addEventListener('click', () => {
             this.onChartParamChange({ chartType: this.state.chartType === 'bar' ? 'line' : 'bar' });
         });
+
         layout.querySelector('#btn-time-range')?.addEventListener('click', () => {
             const cycle: Record<number, number> = { 7: 30, 30: 365, 365: 0, 0: 7 };
             this.onChartParamChange({ timeRangeDays: cycle[this.state.timeRangeDays] ?? 7, timeRangeOffset: 0 });
         });
+
         layout.querySelector('#btn-group-by')?.addEventListener('click', () => {
             this.onChartParamChange({ groupByMode: this.state.groupByMode === 'media_type' ? 'log_name' : 'media_type' });
         });
+
         layout.querySelector('#btn-pie-toggle')?.addEventListener('click', () => {
             this.onChartParamChange({ pieGroupByMode: this.state.pieGroupByMode === 'media_type' ? 'log_name' : 'media_type' });
         });
+
         layout.querySelector('#btn-chars-toggle')?.addEventListener('click', () => {
             this.onChartParamChange({ charsGroupByMode: this.state.charsGroupByMode === 'media_type' ? 'log_name' : 'media_type' });
         });
+
         layout.querySelector('#btn-bar-metric')?.addEventListener('click', () => {
             this.onChartParamChange({ barMetric: this.state.barMetric === 'time' ? 'chars' : 'time' });
+        });
+
+        layout.querySelector('#btn-monthly-prev')?.addEventListener('click', () => {
+            if (this.state.monthlyStatsYear <= this.getEarliestLogYear()) return;
+            this.onChartParamChange({ monthlyStatsYear: this.state.monthlyStatsYear - 1 });
+        });
+
+        layout.querySelector('#btn-monthly-next')?.addEventListener('click', () => {
+            const currentYear = new Date().getFullYear();
+            if (this.state.monthlyStatsYear >= currentYear) return;
+            this.onChartParamChange({ monthlyStatsYear: this.state.monthlyStatsYear + 1 });
+        });
+
+        layout.querySelector('#btn-category-table-prev')?.addEventListener('click', () => {
+            if (!this.canMoveCategoryTableBackward()) return;
+            this.onChartParamChange({ categoryTableRangeOffset: this.state.categoryTableRangeOffset + 1 });
+        });
+
+        layout.querySelector('#btn-category-table-next')?.addEventListener('click', () => {
+            if (this.state.categoryTableRangeMode === 'all_time' || this.state.categoryTableRangeOffset === 0) return;
+            this.onChartParamChange({ categoryTableRangeOffset: this.state.categoryTableRangeOffset - 1 });
+        });
+
+        layout.querySelector('#btn-category-table-range')?.addEventListener('click', () => {
+            const cycle: Record<ActivityChartsState['categoryTableRangeMode'], ActivityChartsState['categoryTableRangeMode']> = {
+                all_time: 'daily',
+                daily: 'weekly',
+                weekly: 'monthly',
+                monthly: 'all_time'
+            };
+            this.onChartParamChange({
+                categoryTableRangeMode: cycle[this.state.categoryTableRangeMode],
+                categoryTableRangeOffset: 0
+            });
         });
     }
 
     private renderCharts(layout: HTMLElement) {
-        const pieCanvas = layout.querySelector('#pieChart') as HTMLCanvasElement;
-        const charsCanvas = layout.querySelector('#charsChart') as HTMLCanvasElement;
-        const barCanvas = layout.querySelector('#barChart') as HTMLCanvasElement;
-        if (!pieCanvas || !barCanvas || !charsCanvas) return;
+        const barCanvas = layout.querySelector('#barChart') as HTMLCanvasElement | null;
+        const pieCanvas = layout.querySelector('#pieChart') as HTMLCanvasElement | null;
+        const charsCanvas = layout.querySelector('#charsChart') as HTMLCanvasElement | null;
+        if (!barCanvas || !pieCanvas || !charsCanvas) return;
 
         if (this.pieChartInstance) this.pieChartInstance.destroy();
         if (this.charsChartInstance) this.charsChartInstance.destroy();
         if (this.barChartInstance) this.barChartInstance.destroy();
 
-        const style = getComputedStyle(document.body);
-        const colors = [
-          style.getPropertyValue('--chart-1').trim() || '#f4a6b8',
-          style.getPropertyValue('--chart-2').trim() || '#b8cdda',
-          style.getPropertyValue('--chart-3').trim() || '#e0bbe4',
-          style.getPropertyValue('--chart-4').trim() || '#957DAD',
-          style.getPropertyValue('--chart-5').trim() || '#D291BC'
-        ];
-
-        const { logs, timeRangeDays, timeRangeOffset, groupByMode, chartType } = this.state;
-        const barMetric = this.state.barMetric;
+        const colors = this.getThemeColors();
+        const range = this.getTimeRangeContext();
+        const filteredLogs = this.getLogsInRange(range.validStart, range.validEnd);
+        const { pieGroupByMode, charsGroupByMode, groupByMode, chartType, barMetric } = this.state;
         const isCharsMetric = barMetric === 'chars';
-        
-        let labels: string[] = [];
-        let getBucketIndex: (dateStr: string) => number = () => -1;
-        let validStart = '';
-        let validEnd = '';
-        const getLocalISODate = (d: Date) => {
-            const pad = (n: number) => n.toString().padStart(2, '0');
-            return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-        };
 
-        const today = new Date();
-        if (timeRangeDays === 0) {
-            // All Time: include every log, group bar chart by year
-            validStart = '';
-            validEnd = '9999-12-31';
-            const years = new Set<number>();
-            for (const log of logs) {
-                years.add(parseInt(log.date.split('-')[0]));
-            }
-            const sortedYears = Array.from(years).sort((a, b) => a - b);
-            labels = sortedYears.map(y => String(y));
-            getBucketIndex = (dateStr: string) => {
-                const year = parseInt(dateStr.split('-')[0]);
-                return sortedYears.indexOf(year);
-            };
-        } else if (timeRangeDays === 7) {
-            const endDay = new Date(today);
-            endDay.setDate(today.getDate() - (7 * timeRangeOffset));
-            const startDay = new Date(endDay);
-            const dayOfWeek = endDay.getDay(); 
-            const diffToMonday = (dayOfWeek === 0 ? 6 : dayOfWeek - 1);
-            startDay.setDate(endDay.getDate() - diffToMonday);
-            endDay.setDate(startDay.getDate() + 6);
-            validStart = getLocalISODate(startDay);
-            validEnd = getLocalISODate(endDay);
-            for(let i = 0; i < 7; i++) {
-                const d = new Date(startDay);
-                d.setDate(startDay.getDate() + i);
-                labels.push(getLocalISODate(d));
-            }
-            getBucketIndex = (dateStr: string) => labels.indexOf(dateStr);
-        } else if (timeRangeDays === 30) {
-            const targetMonth = new Date(today.getFullYear(), today.getMonth() - timeRangeOffset, 1);
-            const y = targetMonth.getFullYear();
-            const m = targetMonth.getMonth();
-            const startDay = new Date(y, m, 1);
-            const endDay = new Date(y, m + 1, 0);
-            validStart = getLocalISODate(startDay);
-            validEnd = getLocalISODate(endDay);
-            const totalDays = endDay.getDate();
-            const weeksCount = Math.ceil(totalDays / 7);
-            for(let i=0; i<weeksCount; i++) labels.push(`Week ${i+1}`);
-            getBucketIndex = (dateStr: string) => {
-                if (dateStr >= validStart && dateStr <= validEnd) {
-                    const date = new Date(dateStr + "T00:00:00");
-                    const firstOfMonth = new Date(y, m, 1);
-                    const firstDayWeekday = firstOfMonth.getDay();
-                    const offset = (firstDayWeekday === 0 ? 6 : firstDayWeekday - 1);
-                    return Math.floor((date.getDate() + offset - 1) / 7);
-                }
-                return -1;
-            };
-        } else if (timeRangeDays === 365) {
-            const targetYear = today.getFullYear() - timeRangeOffset;
-            validStart = `${targetYear}-01-01`;
-            validEnd = `${targetYear}-12-31`;
-            labels = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-            getBucketIndex = (dateStr: string) => {
-                if (dateStr >= validStart && dateStr <= validEnd) {
-                    return parseInt(dateStr.split('-')[1]) - 1;
-                }
-                return -1;
-            };
-        }
-
-        // Single pass over logs: build pieTypeMap, charsTypeMap, and datasetsMap simultaneously
-        const { pieGroupByMode, charsGroupByMode } = this.state;
         const pieTypeMap = new Map<string, number>();
         const charsTypeMap = new Map<string, number>();
         const datasetsMap = new Map<string, number[]>();
-        for (const log of logs) {
-            const inRange = log.date >= validStart && log.date <= validEnd;
-            if (inRange) {
-                const pieKey = pieGroupByMode === 'media_type' ? log.media_type : log.title;
-                pieTypeMap.set(pieKey, (pieTypeMap.get(pieKey) || 0) + log.duration_minutes);
-                if (log.characters_read > 0 && isReadingContentType(log.content_type)) {
-                    const charsKey = charsGroupByMode === 'media_type' ? log.content_type : log.title;
-                    charsTypeMap.set(charsKey, (charsTypeMap.get(charsKey) || 0) + log.characters_read);
-                }
+
+        for (const log of filteredLogs) {
+            const pieKey = pieGroupByMode === 'media_type' ? log.media_type : log.title;
+            pieTypeMap.set(pieKey, (pieTypeMap.get(pieKey) || 0) + log.duration_minutes);
+
+            if (log.characters_read > 0 && isReadingContentType(log.content_type)) {
+                const charsKey = charsGroupByMode === 'media_type' ? log.content_type : log.title;
+                charsTypeMap.set(charsKey, (charsTypeMap.get(charsKey) || 0) + log.characters_read);
             }
-            const bucketIndex = getBucketIndex(log.date);
+
+            const bucketIndex = range.getBucketIndex(log.date);
             if (bucketIndex !== -1) {
                 const barKey = groupByMode === 'media_type' ? log.media_type : log.title;
-                if (!datasetsMap.has(barKey)) datasetsMap.set(barKey, Array(labels.length).fill(0));
+                if (!datasetsMap.has(barKey)) datasetsMap.set(barKey, Array(range.labels.length).fill(0));
                 datasetsMap.get(barKey)![bucketIndex] += isCharsMetric ? log.characters_read : log.duration_minutes;
             }
         }
@@ -318,22 +351,20 @@ export class ActivityCharts extends Component<ActivityChartsState> {
                     legend: { display: pieTypeMap.size <= 6, position: 'bottom', labels: { color: '#f0f0f5' } },
                     tooltip: {
                         callbacks: {
-                            label: function(context: any) {
-                                return `${context.label}: ${formatDuration(context.parsed)}`;
-                            }
+                            label: (context: any) => `${context.label}: ${formatDuration(context.parsed)}`
                         }
                     }
                 }
             }
         });
 
-        // Pie total label
-        let pieTotalMins = 0;
-        pieTypeMap.forEach(v => pieTotalMins += v);
+        let pieTotalMinutes = 0;
+        pieTypeMap.forEach((value) => {
+            pieTotalMinutes += value;
+        });
         const pieTotalEl = layout.querySelector('#pie-total');
-        if (pieTotalEl) pieTotalEl.textContent = `Total: ${formatDuration(pieTotalMins)}`;
+        if (pieTotalEl) pieTotalEl.textContent = `Total: ${formatDuration(pieTotalMinutes)}`;
 
-        // Characters Read By Media Type chart
         this.charsChartInstance = new Chart(charsCanvas, {
             type: 'doughnut',
             data: {
@@ -351,43 +382,42 @@ export class ActivityCharts extends Component<ActivityChartsState> {
                     legend: { display: charsTypeMap.size <= 6, position: 'bottom', labels: { color: '#f0f0f5' } },
                     tooltip: {
                         callbacks: {
-                            label: function(context: any) {
-                                const val = context.parsed;
-                                return `${context.label}: ${val.toLocaleString()} chars`;
-                            }
+                            label: (context: any) => `${context.label}: ${context.parsed.toLocaleString()} 文字`
                         }
                     }
                 }
             }
         });
 
-        // Chars total label
         let charsTotalCount = 0;
-        charsTypeMap.forEach(v => charsTotalCount += v);
+        charsTypeMap.forEach((value) => {
+            charsTotalCount += value;
+        });
         const charsTotalEl = layout.querySelector('#chars-total');
         if (charsTotalEl) charsTotalEl.textContent = `Total: ${charsTotalCount.toLocaleString()} 文字`;
 
-        const datasets = Array.from(datasetsMap.entries()).map(([key, data], i) => ({
+        const datasets = Array.from(datasetsMap.entries()).map(([key, data], index) => ({
             label: key,
-            data: data,
-            backgroundColor: colors[i % colors.length],
-            borderColor: colors[i % colors.length],
+            data,
+            backgroundColor: colors[index % colors.length],
+            borderColor: colors[index % colors.length],
             fill: chartType === 'line' ? false : undefined,
             tension: 0.3
         }));
 
-        // Compute per-label totals for bar mode
-        const labelTotals = labels.map((_, i) => {
+        const labelTotals = range.labels.map((_, labelIndex) => {
             let sum = 0;
-            for (const ds of datasets) sum += ds.data[i];
+            for (const dataset of datasets) {
+                sum += dataset.data[labelIndex];
+            }
             return sum;
         });
 
         this.barChartInstance = new Chart(barCanvas, {
             type: chartType,
             data: {
-                labels: timeRangeDays === 7 ? labels.map(l => l.slice(5)) : labels,
-                datasets: datasets
+                labels: range.displayLabels,
+                datasets
             },
             options: {
                 responsive: true,
@@ -397,26 +427,25 @@ export class ActivityCharts extends Component<ActivityChartsState> {
                 },
                 scales: {
                     x: { stacked: chartType === 'bar', grid: { color: '#3f3f4e' }, ticks: { color: '#a0a0b0' } },
-                    y: { 
-                        stacked: chartType === 'bar', 
-                        grid: { color: '#3f3f4e' }, 
-                        ticks: { 
+                    y: {
+                        stacked: chartType === 'bar',
+                        beginAtZero: true,
+                        grid: { color: '#3f3f4e' },
+                        ticks: {
                             color: '#a0a0b0',
-                            callback: function(value: any) { 
-                                return isCharsMetric ? value.toLocaleString() : formatDuration(value);
-                            }
-                        } 
+                            callback: (value: any) => isCharsMetric ? Number(value).toLocaleString() : formatDuration(Number(value))
+                        }
                     }
                 },
                 plugins: {
-                    legend: { display: datasets.length <= 6, position: 'top', labels: { color: '#a0a0b0'} },
+                    legend: { display: datasets.length <= 6, position: 'top', labels: { color: '#a0a0b0' } },
                     tooltip: {
                         callbacks: {
-                            label: function(context: any) {
-                                const val = context.parsed.y;
+                            label: (context: any) => {
+                                const value = context.parsed.y;
                                 return isCharsMetric
-                                    ? `${context.dataset.label}: ${val.toLocaleString()} 文字`
-                                    : `${context.dataset.label}: ${formatDuration(val)}`;
+                                    ? `${context.dataset.label}: ${value.toLocaleString()} 文字`
+                                    : `${context.dataset.label}: ${formatDuration(value)}`;
                             }
                         }
                     }
@@ -424,7 +453,7 @@ export class ActivityCharts extends Component<ActivityChartsState> {
             },
             plugins: chartType === 'bar' ? [{
                 id: 'barTotals',
-                afterDraw(chart: any) {
+                afterDraw: (chart: any) => {
                     const { ctx } = chart;
                     const xAxis = chart.scales.x;
                     const bottomY = chart.chartArea.bottom;
@@ -446,236 +475,279 @@ export class ActivityCharts extends Component<ActivityChartsState> {
         });
     }
 
-    private renderBottomCharts(layout: HTMLElement) {
-        const cumulativeCanvas = layout.querySelector('#cumulativeChart') as HTMLCanvasElement;
-        const radarCanvas = layout.querySelector('#radarChart') as HTMLCanvasElement;
-        const speedCanvas = layout.querySelector('#speedChart') as HTMLCanvasElement;
-        if (!cumulativeCanvas || !radarCanvas || !speedCanvas) return;
+    private getMonthlyStatsRows(year: number): {
+        rows: { label: string; chars: number; minutes: number; }[];
+        totalChars: number;
+        totalMinutes: number;
+    } {
+        const monthLabels = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        const rows = monthLabels.map((label) => ({ label, chars: 0, minutes: 0 }));
+        const yearStart = `${year}-01-01`;
+        const yearEnd = `${year}-12-31`;
 
-        if (this.cumulativeChartInstance) this.cumulativeChartInstance.destroy();
-        if (this.radarChartInstance) this.radarChartInstance.destroy();
-        if (this.speedChartInstance) this.speedChartInstance.destroy();
-
-        const style = getComputedStyle(document.body);
-        const colors = [
-          style.getPropertyValue('--chart-1').trim() || '#f4a6b8',
-          style.getPropertyValue('--chart-2').trim() || '#b8cdda',
-          style.getPropertyValue('--chart-3').trim() || '#e0bbe4',
-          style.getPropertyValue('--chart-4').trim() || '#957DAD',
-          style.getPropertyValue('--chart-5').trim() || '#D291BC'
-        ];
-
-        const { logs } = this.state;
-
-        // === 1. Cumulative Hours Area Chart ===
-        const sortedLogs = [...logs].sort((a, b) => a.date.localeCompare(b.date));
-        const dailyTotals = new Map<string, number>();
-        for (const log of sortedLogs) {
-            dailyTotals.set(log.date, (dailyTotals.get(log.date) || 0) + log.duration_minutes);
+        for (const log of this.state.logs) {
+            if (log.date < yearStart || log.date > yearEnd) continue;
+            const monthIndex = parseInt(log.date.slice(5, 7), 10) - 1;
+            rows[monthIndex].chars += log.characters_read;
+            rows[monthIndex].minutes += log.duration_minutes;
         }
-        const sortedDates = Array.from(dailyTotals.keys()).sort();
-        let cumulative = 0;
-        const cumulativeData = sortedDates.map(d => {
-            cumulative += dailyTotals.get(d)!;
-            return cumulative / 60; // hours
-        });
 
-        this.cumulativeChartInstance = new Chart(cumulativeCanvas, {
-            type: 'line',
-            data: {
-                labels: sortedDates.map(d => d.slice(5)),
-                datasets: [{
-                    label: 'Cumulative Hours',
-                    data: cumulativeData,
-                    borderColor: colors[0],
-                    backgroundColor: colors[0] + '33',
-                    fill: true,
-                    tension: 0.3,
-                    pointRadius: sortedDates.length > 60 ? 0 : 2,
-                    pointHitRadius: 20,
-                    pointHoverRadius: 6
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                scales: {
-                    x: { grid: { color: '#3f3f4e' }, ticks: { color: '#a0a0b0', maxTicksLimit: 12 } },
-                    y: { grid: { color: '#3f3f4e' }, ticks: { color: '#a0a0b0', callback: (v: any) => `${v}h` } }
-                },
-                elements: {
-                    point: { hoverRadius: 6 }
-                },
-                plugins: {
-                    legend: { display: false },
-                    tooltip: {
-                        callbacks: {
-                            label: (ctx: any) => `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(1)} hours`
-                        }
-                    }
-                }
+        const totalChars = rows.reduce((sum, row) => sum + row.chars, 0);
+        const totalMinutes = rows.reduce((sum, row) => sum + row.minutes, 0);
+        return { rows, totalChars, totalMinutes };
+    }
+
+    private getEarliestLogYear(): number {
+        let earliestYear = new Date().getFullYear();
+
+        for (const log of this.state.logs) {
+            const year = parseInt(log.date.slice(0, 4), 10);
+            if (!Number.isNaN(year) && year < earliestYear) earliestYear = year;
+        }
+
+        return earliestYear;
+    }
+
+    private getCategoryTableData(): {
+        rows: { title: string; chars: number; minutes: number; showChars: boolean; }[];
+        totalChars: number;
+        totalMinutes: number;
+        rangeLabel: string;
+        canGoPrev: boolean;
+        canGoNext: boolean;
+    } {
+        const range = this.getCategoryTableRangeContext();
+        const categoryMap = new Map<string, { chars: number; minutes: number; showChars: boolean; }>();
+
+        for (const log of this.getLogsInRange(range.validStart, range.validEnd)) {
+            const title = log.content_type || 'Unknown';
+            if (!categoryMap.has(title)) {
+                categoryMap.set(title, {
+                    chars: 0,
+                    minutes: 0,
+                    showChars: isReadingContentType(title)
+                });
             }
-        });
+            const row = categoryMap.get(title)!;
+            row.minutes += log.duration_minutes;
+            if (row.showChars) row.chars += log.characters_read;
+        }
 
-        // === 2. Day-of-Week Radar Chart (current week only) ===
-        const dayNames = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-        const dayTotals = Array(7).fill(0);
+        const rows = Array.from(categoryMap.entries())
+            .map(([title, row]) => ({ title, ...row }))
+            .sort((a, b) => b.minutes - a.minutes || a.title.localeCompare(b.title));
+        const totalChars = rows.reduce((sum, row) => sum + row.chars, 0);
+        const totalMinutes = rows.reduce((sum, row) => sum + row.minutes, 0);
 
-        const getLocalISODate2 = (d: Date) => {
-            const pad = (n: number) => n.toString().padStart(2, '0');
-            return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+        return {
+            rows,
+            totalChars,
+            totalMinutes,
+            rangeLabel: range.rangeLabel,
+            canGoPrev: this.canMoveCategoryTableBackward(),
+            canGoNext: this.state.categoryTableRangeMode !== 'all_time' && this.state.categoryTableRangeOffset > 0
         };
-        const todayForRadar = new Date();
-        const todayDow = todayForRadar.getDay();
-        const diffToMon = todayDow === 0 ? 6 : todayDow - 1;
-        const weekStart = new Date(todayForRadar);
-        weekStart.setDate(todayForRadar.getDate() - diffToMon);
-        const weekEnd = new Date(weekStart);
-        weekEnd.setDate(weekStart.getDate() + 6);
-        const weekStartStr = getLocalISODate2(weekStart);
-        const weekEndStr = getLocalISODate2(weekEnd);
+    }
 
-        for (const log of logs) {
-            if (log.date >= weekStartStr && log.date <= weekEndStr) {
-                const d = new Date(log.date + 'T00:00:00');
-                const dow = d.getDay(); // 0=Sun
-                const idx = dow === 0 ? 6 : dow - 1; // Mon=0
-                dayTotals[idx] += log.duration_minutes;
-            }
+    private getCategoryTableRangeContext(offset = this.state.categoryTableRangeOffset): CategoryTableRangeContext {
+        const { categoryTableRangeMode } = this.state;
+        const today = new Date();
+
+        if (categoryTableRangeMode === 'all_time') {
+            return {
+                validStart: '',
+                validEnd: '9999-12-31',
+                rangeLabel: 'All Time'
+            };
         }
 
-        this.radarChartInstance = new Chart(radarCanvas, {
-            type: 'radar',
-            data: {
-                labels: dayNames,
-                datasets: [{
-                    label: 'Minutes',
-                    data: dayTotals,
-                    borderColor: colors[1],
-                    backgroundColor: colors[1] + '33',
-                    pointBackgroundColor: colors[1],
-                    pointRadius: 4
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                scales: {
-                    r: {
-                        beginAtZero: true,
-                        grid: { color: '#3f3f4e' },
-                        angleLines: { color: '#3f3f4e' },
-                        pointLabels: { color: '#a0a0b0', font: { size: 12 } },
-                        ticks: {
-                            color: '#a0a0b0',
-                            backdropColor: 'transparent',
-                            stepSize: 30,
-                            callback: (v: any) => `${v}m`
-                        }
-                    }
-                },
-                plugins: {
-                    legend: { display: false },
-                    tooltip: {
-                        callbacks: {
-                            label: (ctx: any) => `${ctx.dataset.label}: ${formatDuration(ctx.parsed.r)}`
-                        }
-                    }
-                }
-            }
+        if (categoryTableRangeMode === 'daily') {
+            const targetDate = new Date(today);
+            targetDate.setDate(today.getDate() - offset);
+            const dateStr = this.getLocalISODate(targetDate);
+            return {
+                validStart: dateStr,
+                validEnd: dateStr,
+                rangeLabel: dateStr
+            };
+        }
+
+        if (categoryTableRangeMode === 'weekly') {
+            const targetDay = new Date(today);
+            targetDay.setDate(today.getDate() - (7 * offset));
+            const startDay = new Date(targetDay);
+            const dayOfWeek = targetDay.getDay();
+            const diffToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+            startDay.setDate(targetDay.getDate() - diffToMonday);
+            const endDay = new Date(startDay);
+            endDay.setDate(startDay.getDate() + 6);
+
+            return {
+                validStart: this.getLocalISODate(startDay),
+                validEnd: this.getLocalISODate(endDay),
+                rangeLabel: `${this.formatCategoryTableRangeDate(startDay)} - ${this.formatCategoryTableRangeDate(endDay)}`
+            };
+        }
+
+        const targetMonth = new Date(today.getFullYear(), today.getMonth() - offset, 1);
+        const startDay = new Date(targetMonth.getFullYear(), targetMonth.getMonth(), 1);
+        const endDay = new Date(targetMonth.getFullYear(), targetMonth.getMonth() + 1, 0);
+
+        return {
+            validStart: this.getLocalISODate(startDay),
+            validEnd: this.getLocalISODate(endDay),
+            rangeLabel: `${this.formatCategoryTableMonthLabel(targetMonth)} ${targetMonth.getFullYear()}`
+        };
+    }
+
+    private canMoveCategoryTableBackward(): boolean {
+        if (this.state.categoryTableRangeMode === 'all_time') return false;
+
+        let earliestDate = '';
+        for (const log of this.state.logs) {
+            if (!earliestDate || log.date < earliestDate) earliestDate = log.date;
+        }
+        if (!earliestDate) return false;
+
+        const previousRange = this.getCategoryTableRangeContext(this.state.categoryTableRangeOffset + 1);
+        return earliestDate <= previousRange.validEnd;
+    }
+
+    private getCategoryTableRangeModeLabel(mode: ActivityChartsState['categoryTableRangeMode']): string {
+        if (mode === 'daily') return 'Daily';
+        if (mode === 'weekly') return 'Weekly';
+        if (mode === 'monthly') return 'Monthly';
+        return 'All Time';
+    }
+
+    private formatCategoryTableRangeDate(date: Date): string {
+        const monthLabels = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        return `${monthLabels[date.getMonth()]} ${date.getDate()}, ${date.getFullYear()}`;
+    }
+
+    private formatCategoryTableMonthLabel(date: Date): string {
+        const monthLabels = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+        return monthLabels[date.getMonth()];
+    }
+
+    private formatDecimalHours(totalMinutes: number): string {
+        return (totalMinutes / 60).toLocaleString(undefined, {
+            minimumFractionDigits: 1,
+            maximumFractionDigits: 1
         });
+    }
 
-        // === 3. Reading Speed Over Time ===
-        const speedEntries: { date: string; speed: number; chars: number; mins: number }[] = [];
-        for (const log of sortedLogs) {
-            if (log.characters_read > 0 && log.duration_minutes > 0 && isReadingContentType(log.content_type)) {
-                speedEntries.push({ date: log.date, speed: (log.characters_read / log.duration_minutes) * 60, chars: log.characters_read, mins: log.duration_minutes });
+    private getTimeRangeContext(): TimeRangeContext {
+        const { logs, timeRangeDays, timeRangeOffset } = this.state;
+        const today = new Date();
+
+        if (timeRangeDays === 0) {
+            const years = new Set<number>();
+            for (const log of logs) {
+                years.add(parseInt(log.date.split('-')[0], 10));
             }
-        }
-
-        // Average per week
-        const weekMap = new Map<string, { total: number; count: number; totalChars: number; totalMins: number; minSpeed: number; maxSpeed: number }>();
-        for (const entry of speedEntries) {
-            const d = new Date(entry.date + 'T00:00:00');
-            const dow = d.getDay();
-            const diff = dow === 0 ? 6 : dow - 1;
-            const mon = new Date(d);
-            mon.setDate(d.getDate() - diff);
-            const weekKey = `${mon.getFullYear()}-${(mon.getMonth()+1).toString().padStart(2,'0')}-${mon.getDate().toString().padStart(2,'0')}`;
-            if (!weekMap.has(weekKey)) weekMap.set(weekKey, { total: 0, count: 0, totalChars: 0, totalMins: 0, minSpeed: Infinity, maxSpeed: 0 });
-            const w = weekMap.get(weekKey)!;
-            w.total += entry.speed;
-            w.count++;
-            w.totalChars += entry.chars;
-            w.totalMins += entry.mins;
-            if (entry.speed < w.minSpeed) w.minSpeed = entry.speed;
-            if (entry.speed > w.maxSpeed) w.maxSpeed = entry.speed;
-        }
-        const weekKeys = Array.from(weekMap.keys()).sort();
-        const weekStats = weekKeys.map(k => weekMap.get(k)!);
-        const weekAvgSpeeds = weekStats.map(w => Math.round(w.total / w.count));
-
-        this.speedChartInstance = new Chart(speedCanvas, {
-            type: 'line',
-            data: {
-                labels: weekKeys.map(k => k.slice(5)),
-                datasets: [{
-                    label: '文字/hour (weekly avg)',
-                    data: weekAvgSpeeds,
-                    borderColor: colors[2],
-                    backgroundColor: colors[2] + '33',
-                    fill: false,
-                    tension: 0.3,
-                    pointRadius: weekKeys.length > 30 ? 0 : 3,
-                    pointHitRadius: 15,
-                    pointHoverRadius: 6
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                interaction: {
-                    mode: 'index',
-                    intersect: false
-                },
-                scales: {
-                    x: { grid: { color: '#3f3f4e' }, ticks: { color: '#a0a0b0', maxTicksLimit: 12 } },
-                    y: { grid: { color: '#3f3f4e' }, ticks: { color: '#a0a0b0', callback: (v: any) => `${v} 文字/h` }, beginAtZero: true }
-                },
-                plugins: {
-                    legend: { display: false },
-                    tooltip: {
-                        callbacks: {
-                            title: (items: any[]) => {
-                                const idx = items[0].dataIndex;
-                                return `Week of ${weekKeys[idx]}`;
-                            },
-                            label: (ctx: any) => {
-                                return `Avg: ${ctx.parsed.y.toLocaleString()} 文字/hour`;
-                            },
-                            afterLabel: (ctx: any) => {
-                                const w = weekStats[ctx.dataIndex];
-                                const lines = [
-                                    `Sessions: ${w.count}`,
-                                    `Total chars: ${w.totalChars.toLocaleString()}`,
-                                    `Total time: ${formatDuration(w.totalMins)}`,
-                                    `Range: ${Math.round(w.minSpeed).toLocaleString()}–${Math.round(w.maxSpeed).toLocaleString()} 文字/h`
-                                ];
-                                return lines;
-                            }
-                        }
-                    }
+            const sortedYears = Array.from(years).sort((a, b) => a - b);
+            const labels = sortedYears.map((year) => String(year));
+            return {
+                validStart: '',
+                validEnd: '9999-12-31',
+                labels,
+                displayLabels: labels,
+                getBucketIndex: (dateStr: string) => {
+                    const year = parseInt(dateStr.split('-')[0], 10);
+                    return sortedYears.indexOf(year);
                 }
+            };
+        }
+
+        if (timeRangeDays === 7) {
+            const endDay = new Date(today);
+            endDay.setDate(today.getDate() - (7 * timeRangeOffset));
+            const startDay = new Date(endDay);
+            const dayOfWeek = endDay.getDay();
+            const diffToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+            startDay.setDate(endDay.getDate() - diffToMonday);
+            endDay.setDate(startDay.getDate() + 6);
+
+            const labels: string[] = [];
+            for (let i = 0; i < 7; i++) {
+                const date = new Date(startDay);
+                date.setDate(startDay.getDate() + i);
+                labels.push(this.getLocalISODate(date));
             }
-        });
+
+            return {
+                validStart: this.getLocalISODate(startDay),
+                validEnd: this.getLocalISODate(endDay),
+                labels,
+                displayLabels: labels.map((label) => label.slice(5)),
+                getBucketIndex: (dateStr: string) => labels.indexOf(dateStr)
+            };
+        }
+
+        if (timeRangeDays === 30) {
+            const targetMonth = new Date(today.getFullYear(), today.getMonth() - timeRangeOffset, 1);
+            const year = targetMonth.getFullYear();
+            const month = targetMonth.getMonth();
+            const startDay = new Date(year, month, 1);
+            const endDay = new Date(year, month + 1, 0);
+            const totalDays = endDay.getDate();
+            const weeksCount = Math.ceil(totalDays / 7);
+            const labels = Array.from({ length: weeksCount }, (_, index) => `Week ${index + 1}`);
+
+            return {
+                validStart: this.getLocalISODate(startDay),
+                validEnd: this.getLocalISODate(endDay),
+                labels,
+                displayLabels: labels,
+                getBucketIndex: (dateStr: string) => {
+                    if (dateStr < this.getLocalISODate(startDay) || dateStr > this.getLocalISODate(endDay)) return -1;
+                    const date = new Date(dateStr + 'T00:00:00');
+                    const firstDayWeekday = startDay.getDay();
+                    const offset = firstDayWeekday === 0 ? 6 : firstDayWeekday - 1;
+                    return Math.floor((date.getDate() + offset - 1) / 7);
+                }
+            };
+        }
+
+        const targetYear = today.getFullYear() - timeRangeOffset;
+        const labels = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        return {
+            validStart: `${targetYear}-01-01`,
+            validEnd: `${targetYear}-12-31`,
+            labels,
+            displayLabels: labels,
+            getBucketIndex: (dateStr: string) => {
+                if (dateStr < `${targetYear}-01-01` || dateStr > `${targetYear}-12-31`) return -1;
+                return parseInt(dateStr.split('-')[1], 10) - 1;
+            }
+        };
+    }
+
+    private getLogsInRange(validStart: string, validEnd: string): ActivitySummary[] {
+        if (!validStart) return this.state.logs;
+        return this.state.logs.filter((log) => log.date >= validStart && log.date <= validEnd);
+    }
+
+    private getThemeColors(): string[] {
+        const style = getComputedStyle(document.body);
+        return [
+            style.getPropertyValue('--chart-1').trim() || '#f4a6b8',
+            style.getPropertyValue('--chart-2').trim() || '#b8cdda',
+            style.getPropertyValue('--chart-3').trim() || '#e0bbe4',
+            style.getPropertyValue('--chart-4').trim() || '#957DAD',
+            style.getPropertyValue('--chart-5').trim() || '#D291BC'
+        ];
+    }
+
+    private getLocalISODate(date: Date): string {
+        const pad = (value: number) => value.toString().padStart(2, '0');
+        return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
     }
 
     public destroy() {
         if (this.pieChartInstance) this.pieChartInstance.destroy();
         if (this.charsChartInstance) this.charsChartInstance.destroy();
         if (this.barChartInstance) this.barChartInstance.destroy();
-        if (this.cumulativeChartInstance) this.cumulativeChartInstance.destroy();
-        if (this.radarChartInstance) this.radarChartInstance.destroy();
-        if (this.speedChartInstance) this.speedChartInstance.destroy();
     }
 }

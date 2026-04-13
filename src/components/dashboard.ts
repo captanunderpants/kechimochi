@@ -20,6 +20,9 @@ interface DashboardState {
         charsGroupByMode: 'media_type' | 'log_name';
         chartType: 'bar' | 'line';
         barMetric: 'time' | 'chars';
+        monthlyStatsYear: number;
+        categoryTableRangeMode: 'daily' | 'weekly' | 'monthly' | 'all_time';
+        categoryTableRangeOffset: number;
     }
 }
 
@@ -83,7 +86,10 @@ export class Dashboard extends Component<DashboardState> {
                 pieGroupByMode: 'log_name',
                 charsGroupByMode: 'log_name',
                 chartType: 'bar',
-                barMetric: 'time'
+                barMetric: 'time',
+                monthlyStatsYear: new Date().getFullYear(),
+                categoryTableRangeMode: 'all_time',
+                categoryTableRangeOffset: 0
             }
         });
     }
@@ -112,11 +118,11 @@ export class Dashboard extends Component<DashboardState> {
         const quickLogImages = await this.getQuickLogImages(quickLogItems);
 
         this.clear();
-        const root = html`<div class="animate-fade-in" style="display: flex; flex-direction: column; gap: 2rem;"></div>`;
+        const root = html`<div class="animate-fade-in" style="display: flex; flex-direction: column; gap: 1.5rem;"></div>`;
         this.container.appendChild(root);
 
         // 1. Stats and Heatmap Row
-        const topRow = html`<div style="display: grid; grid-template-columns: 250px minmax(0, 1fr); gap: 2rem;"></div>`;
+        const topRow = html`<div style="display: grid; grid-template-columns: 250px minmax(0, 1fr); gap: 1.5rem;"></div>`;
         root.appendChild(topRow);
 
         const statsContainer = html`<div class="card" id="stats-box-container" style="display: flex; flex-direction: column;"></div>`;
@@ -128,50 +134,59 @@ export class Dashboard extends Component<DashboardState> {
         this.heatmapContainerEl = heatmapContainer;
         this.rerenderHeatmap();
 
-        // 2. Charts Row
-        const chartsContainer = html`<div id="charts-container"></div>`;
-        root.appendChild(chartsContainer);
-        this.chartsContainerEl = chartsContainer;
-        this.rerenderCharts();
-
-        // 3. Quick Log Row
-        const quickLogCard = html`
-            <div class="card">
-                <div style="display: flex; justify-content: space-between; align-items: center; gap: 1rem; margin-bottom: 1rem;">
-                    <div>
-                        <h3 style="margin: 0;">Quick Log</h3>
-                        <p style="margin: 0.35rem 0 0; color: var(--text-secondary); font-size: 0.85rem;">Jump back into recently logged media.</p>
+        // 2. Analytics Row
+        const analyticsRow = html`
+            <div class="dashboard-analytics-row">
+                <div class="dashboard-quick-log-rail">
+                    <div class="card">
+                        <div style="display: flex; justify-content: space-between; align-items: center; gap: 1rem; margin-bottom: 1rem;">
+                            <div>
+                                <h3 style="margin: 0;">Quick Log</h3>
+                            </div>
+                        </div>
+                        <div class="dashboard-quick-log-list" id="dashboard-quick-log-list">
+                            ${quickLogItems.length > 0 ? quickLogItems.map(media => {
+                                const imageSrc = media.id ? quickLogImages.get(media.id) : null;
+                                const contentType = escapeHTML(media.content_type || media.media_type || 'Unknown');
+                                const title = escapeHTML(media.title);
+                                return `
+                                    <div class="dashboard-quick-log-item">
+                                        <button type="button" class="dashboard-quick-log-action" data-media-id="${media.id}" aria-label="Log activity for ${title}">
+                                            <div class="dashboard-quick-log-thumb${media.nsfw && imageSrc ? ' is-nsfw' : ''}">
+                                                ${imageSrc
+                                                    ? `<img src="${imageSrc}" alt="${title}" />`
+                                                    : `<div class="dashboard-quick-log-fallback"><span>${title}</span></div>`
+                                                }
+                                            </div>
+                                            <div class="dashboard-quick-log-meta">
+                                                <span class="dashboard-quick-log-title">${title}</span>
+                                                <span class="dashboard-quick-log-type">${contentType}</span>
+                                            </div>
+                                        </button>
+                                        <button type="button" class="dashboard-quick-log-open-link" data-media-id="${media.id}" aria-label="Open ${title} in library">
+                                            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                                                <path d="M8 6h10v10h-2V9.41l-9.29 9.3-1.42-1.42 9.3-9.29H8V6Z" fill="currentColor"></path>
+                                            </svg>
+                                        </button>
+                                    </div>
+                                `;
+                            }).join('') : `
+                                <div class="dashboard-quick-log-empty">No ongoing media has been logged recently.</div>
+                            `}
+                        </div>
                     </div>
+
                 </div>
-                <div class="dashboard-quick-log-strip" id="dashboard-quick-log-strip">
-                    ${quickLogItems.length > 0 ? quickLogItems.map(media => {
-                        const imageSrc = media.id ? quickLogImages.get(media.id) : null;
-                        const contentType = escapeHTML(media.content_type || media.media_type || 'Unknown');
-                        const title = escapeHTML(media.title);
-                        return `
-                            <button type="button" class="dashboard-quick-log-item" data-media-id="${media.id}">
-                                <div class="dashboard-quick-log-thumb${media.nsfw && imageSrc ? ' is-nsfw' : ''}">
-                                    ${imageSrc
-                                        ? `<img src="${imageSrc}" alt="${title}" />`
-                                        : `<div class="dashboard-quick-log-fallback"><span>${title}</span></div>`
-                                    }
-                                </div>
-                                <div class="dashboard-quick-log-meta">
-                                    <span class="dashboard-quick-log-title">${title}</span>
-                                    <span class="dashboard-quick-log-type">${contentType}</span>
-                                </div>
-                            </button>
-                        `;
-                    }).join('') : `
-                        <div class="dashboard-quick-log-empty">No recently logged media yet.</div>
-                    `}
-                </div>
+                <div id="charts-container" style="min-width: 0;"></div>
             </div>
         `;
-        root.appendChild(quickLogCard);
-        this.setupQuickLogListeners(quickLogCard, quickLogItems);
+        root.appendChild(analyticsRow);
+        const chartsContainer = analyticsRow.querySelector('#charts-container') as HTMLElement;
+        this.chartsContainerEl = chartsContainer;
+        this.rerenderCharts();
+        this.setupQuickLogListeners(analyticsRow, quickLogItems);
 
-        // 4. Recent Logs Row
+        // 3. Recent Logs Row
         const logsCard = html`
             <div class="card">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
@@ -187,6 +202,7 @@ export class Dashboard extends Component<DashboardState> {
             const changed = await showLogEditorModal();
             if (changed) {
                 await this.loadData();
+                await this.render();
             }
         });
 
@@ -209,7 +225,7 @@ export class Dashboard extends Component<DashboardState> {
             if (media.tracking_status !== 'Ongoing') continue;
             seenMediaIds.add(log.media_id);
             items.push(media);
-            if (items.length >= 12) break;
+            if (items.length >= 8) break;
         }
 
         return items;
@@ -246,7 +262,7 @@ export class Dashboard extends Component<DashboardState> {
     private setupQuickLogListeners(card: HTMLElement, quickLogItems: Media[]): void {
         const mediaById = new Map(quickLogItems.filter(media => media.id !== undefined).map(media => [media.id!, media]));
 
-        card.querySelectorAll('.dashboard-quick-log-item').forEach(button => {
+        card.querySelectorAll('.dashboard-quick-log-action').forEach(button => {
             button.addEventListener('click', async (event) => {
                 const mediaId = parseInt((event.currentTarget as HTMLElement).getAttribute('data-media-id') || '', 10);
                 if (Number.isNaN(mediaId)) return;
@@ -263,6 +279,21 @@ export class Dashboard extends Component<DashboardState> {
                     await this.loadData();
                     await this.render();
                 }
+            });
+        });
+
+        card.querySelectorAll('.dashboard-quick-log-open-link').forEach(button => {
+            button.addEventListener('click', (event) => {
+                event.stopPropagation();
+                const mediaId = parseInt((event.currentTarget as HTMLElement).getAttribute('data-media-id') || '', 10);
+                if (Number.isNaN(mediaId)) return;
+
+                window.dispatchEvent(new CustomEvent('app-navigate', {
+                    detail: {
+                        view: 'media',
+                        focusMediaId: mediaId
+                    }
+                }));
             });
         });
     }
@@ -318,7 +349,7 @@ export class Dashboard extends Component<DashboardState> {
 
         const pieces = [
             `<span style="color: var(--text-secondary);">•</span>`,
-            `<span style="color: var(--accent-yellow); font-weight: 600;">${log.characters_read.toLocaleString()} chars</span>`
+            `<span style="color: var(--accent-yellow); font-weight: 600;">${log.characters_read.toLocaleString()} 文字</span>`
         ];
 
         if (log.characters_read > 0 && log.duration_minutes > 0) {

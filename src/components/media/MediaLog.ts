@@ -27,12 +27,12 @@ export class MediaLog extends Component<MediaLogState> {
         const list = html`<div style="display: flex; flex-direction: column; gap: 0.5rem; flex: 1; overflow-y: auto;"></div>`;
 
         this.state.logs.forEach(log => {
-            const charsHtml = log.characters_read > 0 ? ` <span style="color: var(--accent-yellow); font-size: 0.8rem; margin-left: 0.5rem;">(${log.characters_read.toLocaleString()} chars)</span>` : '';
+            const charsHtml = log.characters_read > 0 ? ` <span style="color: var(--accent-yellow); font-size: 0.8rem; margin-left: 0.5rem;">(${log.characters_read.toLocaleString()} 文字)</span>` : '';
             
             let speedHtml = '';
             if (this.isReading && log.characters_read > 0 && log.duration_minutes > 0) {
                 const speed = log.characters_read / (log.duration_minutes / 60);
-                speedHtml = `<span style="color: var(--text-secondary); font-size: 0.8rem;">${Math.round(speed).toLocaleString()} chars/hr</span>`;
+                speedHtml = `<span style="color: var(--text-secondary); font-size: 0.8rem;">${Math.round(speed).toLocaleString()} 文字/hour</span>`;
             }
 
             const entry = html`

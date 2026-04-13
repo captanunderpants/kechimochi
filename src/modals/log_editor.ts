@@ -24,7 +24,7 @@ export async function showLogEditorModal(): Promise<boolean> {
                 <div style="display: grid; grid-template-columns: minmax(0, 2fr) 120px 110px 110px 60px; gap: 0.5rem; padding: 0.5rem 0.25rem; font-size: 0.75rem; font-weight: 600; color: var(--text-secondary); border-bottom: 1px solid var(--border-color);">
                     <span>Title</span>
                     <span>Duration</span>
-                    <span>Characters</span>
+                    <span>文字</span>
                     <span>Date</span>
                     <span></span>
                 </div>

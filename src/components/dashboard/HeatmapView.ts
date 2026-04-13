@@ -18,13 +18,25 @@ export class HeatmapView extends Component<HeatmapViewState> {
 
     render() {
         this.clear();
+        const quickTotals = this.getQuickTotals();
         
         const card = html`
             <div class="card" style="display: flex; flex-direction: column; min-width: 0; height: 100%;">
-                <div style="display: flex; justify-content: center; align-items: center; margin-bottom: 2rem; gap: 1rem;">
-                    <button class="btn btn-ghost" style="padding: 0.2rem 0.5rem;" id="btn-heatmap-prev">&lt;</button>
-                    <h3 style="margin: 0; font-size: 1.1rem; color: var(--text-secondary);">Tracking Heatmap (<span id="heatmap-year-label">${this.state.year}</span>)</h3>
-                    <button class="btn btn-ghost" style="padding: 0.2rem 0.5rem;" id="btn-heatmap-next">&gt;</button>
+                <div class="heatmap-header">
+                    <div class="heatmap-title-row">
+                        <button class="btn btn-ghost" style="padding: 0.2rem 0.5rem;" id="btn-heatmap-prev">&lt;</button>
+                        <h3 style="margin: 0; font-size: 1.1rem; color: var(--text-secondary);">Tracking Heatmap (<span id="heatmap-year-label">${this.state.year}</span>)</h3>
+                        <button class="btn btn-ghost" style="padding: 0.2rem 0.5rem;" id="btn-heatmap-next">&gt;</button>
+                    </div>
+                    <div class="heatmap-quick-totals">
+                        ${quickTotals.map((total) => `
+                            <div class="heatmap-quick-total-item">
+                                <span class="heatmap-quick-total-label">${total.label}</span>
+                                <span class="heatmap-quick-total-chars">${total.chars.toLocaleString()} 文字</span>
+                                <span class="heatmap-quick-total-time">${formatDuration(total.minutes)}</span>
+                            </div>
+                        `).join('')}
+                    </div>
                 </div>
                 <div style="flex: 1; display: flex; align-items: center; justify-content: center; width: 100%;">
                     <div id="heatmap-inner-container" style="width: 100%; display: flex; justify-content: center;">
@@ -52,11 +64,6 @@ export class HeatmapView extends Component<HeatmapViewState> {
 
         const startDate = new Date(year, 0, 1);
         const endDate = new Date(year, 11, 31);
-        
-        const getLocalISODate = (d: Date) => {
-            const pad = (n: number) => n.toString().padStart(2, '0');
-            return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-        };
 
         const cells = [];
         const firstDayOfYear = new Date(year, 0, 1);
@@ -80,7 +87,7 @@ export class HeatmapView extends Component<HeatmapViewState> {
         const lightRange = getThemeNum('--heatmap-light-range', 41);
 
         for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
-            const dateStr = getLocalISODate(d);
+            const dateStr = this.getLocalISODate(d);
             const minutes = dateMap.get(dateStr) || 0;
             let cellStyle = "";
             if (minutes > 0) {
@@ -145,6 +152,39 @@ export class HeatmapView extends Component<HeatmapViewState> {
             currentCell = null;
             tooltip.style.display = 'none';
         });
+    }
+
+    private getQuickTotals(): { label: string; minutes: number; chars: number; }[] {
+        const today = new Date();
+        const todayStr = this.getLocalISODate(today);
+
+        const weekStart = new Date(today);
+        const weekDay = today.getDay();
+        const diffToMonday = weekDay === 0 ? 6 : weekDay - 1;
+        weekStart.setDate(today.getDate() - diffToMonday);
+        const weekStartStr = this.getLocalISODate(weekStart);
+
+        const monthStartStr = `${todayStr.slice(0, 7)}-01`;
+        const totals = [
+            { label: 'This Day', minutes: 0, chars: 0, matches: (log: ActivitySummary) => log.date === todayStr },
+            { label: 'This Week', minutes: 0, chars: 0, matches: (log: ActivitySummary) => log.date >= weekStartStr && log.date <= todayStr },
+            { label: 'This Month', minutes: 0, chars: 0, matches: (log: ActivitySummary) => log.date >= monthStartStr && log.date <= todayStr }
+        ];
+
+        for (const log of this.state.logs) {
+            for (const total of totals) {
+                if (!total.matches(log)) continue;
+                total.minutes += log.duration_minutes;
+                total.chars += log.characters_read;
+            }
+        }
+
+        return totals.map(({ label, minutes, chars }) => ({ label, minutes, chars }));
+    }
+
+    private getLocalISODate(date: Date): string {
+        const pad = (value: number) => value.toString().padStart(2, '0');
+        return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
     }
 
     private static heatmapTooltip: HTMLElement | null = null;
