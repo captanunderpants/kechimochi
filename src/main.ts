@@ -57,6 +57,7 @@ class App {
         this.setupNavigation();
         this.setupProfileControls();
         this.setupGlobalActions();
+        this.setupGlobalShortcuts();
         this.setupEventListeners();
 
         await this.ensureProfilesList();
@@ -132,6 +133,34 @@ class App {
     private setupGlobalActions() {
         document.getElementById('btn-add-activity')?.addEventListener('click', async () => {
             const success = await showLogActivityModal();
+            if (success) {
+                this.renderCurrentView();
+            }
+        });
+    }
+
+    private setupGlobalShortcuts() {
+        window.addEventListener('keydown', async (e) => {
+            if ((!e.metaKey && !e.ctrlKey) || e.repeat) return;
+
+            const key = e.key.toLowerCase();
+            if (key !== 'n' && key !== 'r') return;
+
+            e.preventDefault();
+
+            if (document.querySelector('.modal-overlay.active')) {
+                return;
+            }
+
+            if (key === 'r') {
+                this.renderCurrentView();
+                return;
+            }
+
+            const mediaPrefill = this.currentView === 'media'
+                ? this.mediaView.getCurrentDetailLogPrefill()
+                : null;
+            const success = await showLogActivityModal(mediaPrefill || undefined);
             if (success) {
                 this.renderCurrentView();
             }

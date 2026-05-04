@@ -6,6 +6,7 @@ import { CONTENT_TYPES, getMediaTypeForContentType, isReadingContentType } from 
 import { isValidImporterUrl, getAvailableSourcesForContentType, fetchMetadataForUrl } from '../../importers';
 import { open } from '@tauri-apps/plugin-dialog';
 import { MediaLog } from './MediaLog';
+import { MediaActivityChart } from './MediaActivityChart';
 
 interface MediaDetailState {
     media: Media;
@@ -25,6 +26,7 @@ export class MediaDetail extends Component<MediaDetailState> {
     private isLightboxOpen: boolean = false;
     private lightboxOverlay: HTMLElement | null = null;
     private coverClickTimeout: ReturnType<typeof setTimeout> | null = null;
+    private activityChartComponent: MediaActivityChart | null = null;
 
     constructor(container: HTMLElement, media: Media, logs: ActivitySummary[], mediaList: Media[], currentIndex: number, callbacks: { onBack: () => void, onNext: () => void, onPrev: () => void, onNavigate: (index: number) => void, onDelete: () => void }) {
         super(container, { media, logs, imgSrc: null });
@@ -141,6 +143,8 @@ export class MediaDetail extends Component<MediaDetailState> {
     }
 
     async render() {
+        this.activityChartComponent?.destroy();
+        this.activityChartComponent = null;
         this.clear();
         const { media, imgSrc, logs } = this.state;
         const shouldBlurCover = this.shouldBlurCover();
@@ -173,6 +177,7 @@ export class MediaDetail extends Component<MediaDetailState> {
                             : html`<div style="width: 100%; aspect-ratio: 2/3; background: var(--bg-dark); border: 2px dashed var(--border-color); border-radius: var(--radius-md); display: flex; align-items: center; justify-content: center; cursor: pointer; color: var(--text-secondary);" id="media-cover-img" title="${coverTitle}">No Image</div>`
                         }
                         <div style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border-color); display: flex; flex-direction: column; gap: 0.5rem;">
+                            <button class="btn btn-primary" id="btn-log-activity-cover" style="width: 100%; padding: 0.8rem; font-size: 0.95rem; font-weight: 700;">Log Activity</button>
                             <button class="btn" id="btn-delete-media-detail" style="background-color: #ff4757; color: white; border: none; font-weight: bold; width: 100%; padding: 0.6rem; font-size: 0.9rem;">Delete Media</button>
                             <div style="font-size: 0.7rem; color: var(--text-secondary); line-height: 1.2; text-align: center;">
                                 <strong>DANGER:</strong> COMPLETELY REMOVES THIS MEDIA AND <strong>ALL</strong> ASSOCIATED WORK LOGS FOR ALL USERS.
@@ -203,14 +208,15 @@ export class MediaDetail extends Component<MediaDetailState> {
                             </div>
                         </div>
 
+                        <div id="media-personal-stats" style="display: none;"></div>
+
                         <div class="card" style="display: flex; flex-direction: column; gap: 0.5rem;">
                             <h4 style="margin: 0; color: var(--text-secondary);">Description</h4>
-                            <div id="media-desc" title="Double click to edit description" style="cursor: pointer; white-space: pre-wrap;">${media.description || 'No description provided. Double click here to add one.'}</div>
+                            <div id="media-desc" title="Double click to edit description" style="cursor: pointer; white-space: pre-wrap; max-height: 8rem; min-height: 3rem; overflow-y: auto; padding-right: 0.35rem; line-height: 1.45;">${media.description || 'No description provided. Double click here to add one.'}</div>
                         </div>
 
-                        <!-- Stats & Extra Fields -->
+                        <!-- Extra Fields -->
                         <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem;">
-                            <div id="media-personal-stats" style="grid-column: span 3; display: none;"></div>
                             ${await this.getExtraDataHtml(media)}
                         </div>
 
@@ -220,11 +226,12 @@ export class MediaDetail extends Component<MediaDetailState> {
                             <button class="btn btn-ghost btn-meta-clear" id="btn-clear-meta" style="padding: 0.4rem 0.8rem; font-size: 0.8rem;">Clear Metadata</button>
                         </div>
 
+                        <div id="media-activity-chart-container"></div>
+
                         <!-- Activity Logs -->
                         <div class="card" style="margin-top: 1rem; flex: 1; display: flex; flex-direction: column; min-height: 500px;">
                             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
                                 <h4 style="margin: 0; color: var(--text-secondary);">Recent Activity</h4>
-                                <button class="btn btn-primary" id="btn-log-activity" style="font-size: 0.8rem; padding: 0.3rem 0.8rem;">Log Activity</button>
                             </div>
                             <div id="media-logs-container" style="display: flex; flex-direction: column; gap: 0.5rem; flex: 1; overflow-y: auto;"></div>
                         </div>
@@ -236,6 +243,12 @@ export class MediaDetail extends Component<MediaDetailState> {
         this.container.appendChild(detailView);
         this.setupListeners(detailView);
         this.renderStats(detailView);
+
+        const chartContainer = detailView.querySelector('#media-activity-chart-container') as HTMLElement | null;
+        if (chartContainer) {
+            this.activityChartComponent = new MediaActivityChart(chartContainer, logs, isReadingContentType(media.content_type || ''));
+            this.activityChartComponent.render();
+        }
         
         const logsContainer = detailView.querySelector('#media-logs-container') as HTMLElement;
         const isReading = isReadingContentType(media.content_type || '');
@@ -499,8 +512,8 @@ export class MediaDetail extends Component<MediaDetailState> {
             this.render();
         });
 
-        root.querySelector('#btn-log-activity')?.addEventListener('click', async () => {
-            const logged = await showLogActivityModal({ title: this.state.media.title, contentType: this.state.media.content_type || undefined });
+        root.querySelector('#btn-log-activity-cover')?.addEventListener('click', async () => {
+            const logged = await showLogActivityModal({ mediaId: this.state.media.id, title: this.state.media.title, contentType: this.state.media.content_type || undefined });
             if (logged) {
                 const freshLogs = await getLogsForMedia(this.state.media.id!);
                 this.state.logs = freshLogs;
@@ -616,6 +629,7 @@ export class MediaDetail extends Component<MediaDetailState> {
     public destroy(): void {
         this.clearCoverClickTimeout();
         this.closeLightbox();
+        this.activityChartComponent?.destroy();
         window.removeEventListener('keydown', this.handleGlobalKeydown, true);
     }
 }

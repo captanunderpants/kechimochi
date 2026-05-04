@@ -13,7 +13,8 @@ interface DashboardState {
     mediaList: Media[];
     currentHeatmapYear: number;
     chartParams: {
-        timeRangeDays: number;
+        timeBucketMode: 'day' | 'week' | 'month' | 'year';
+        timeRangeMode: 'week' | 'month' | 'year' | 'all_time';
         timeRangeOffset: number;
         groupByMode: 'media_type' | 'log_name';
         pieGroupByMode: 'media_type' | 'log_name';
@@ -80,7 +81,8 @@ export class Dashboard extends Component<DashboardState> {
             mediaList: [],
             currentHeatmapYear: new Date().getFullYear(),
             chartParams: {
-                timeRangeDays: 7,
+                timeBucketMode: 'day',
+                timeRangeMode: 'week',
                 timeRangeOffset: 0,
                 groupByMode: 'log_name',
                 pieGroupByMode: 'log_name',
@@ -151,7 +153,7 @@ export class Dashboard extends Component<DashboardState> {
                                 const title = escapeHTML(media.title);
                                 return `
                                     <div class="dashboard-quick-log-item">
-                                        <button type="button" class="dashboard-quick-log-action" data-media-id="${media.id}" aria-label="Log activity for ${title}">
+                                        <button type="button" class="dashboard-quick-log-action" data-media-id="${media.id}" aria-label="Open ${title} in library">
                                             <div class="dashboard-quick-log-thumb${media.nsfw && imageSrc ? ' is-nsfw' : ''}">
                                                 ${imageSrc
                                                     ? `<img src="${imageSrc}" alt="${title}" />`
@@ -163,9 +165,9 @@ export class Dashboard extends Component<DashboardState> {
                                                 <span class="dashboard-quick-log-type">${contentType}</span>
                                             </div>
                                         </button>
-                                        <button type="button" class="dashboard-quick-log-open-link" data-media-id="${media.id}" aria-label="Open ${title} in library">
+                                        <button type="button" class="dashboard-quick-log-open-link" data-media-id="${media.id}" aria-label="Log activity for ${title}">
                                             <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                                                <path d="M8 6h10v10h-2V9.41l-9.29 9.3-1.42-1.42 9.3-9.29H8V6Z" fill="currentColor"></path>
+                                                <path d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6V5Z" fill="currentColor"></path>
                                             </svg>
                                         </button>
                                     </div>
@@ -263,28 +265,7 @@ export class Dashboard extends Component<DashboardState> {
         const mediaById = new Map(quickLogItems.filter(media => media.id !== undefined).map(media => [media.id!, media]));
 
         card.querySelectorAll('.dashboard-quick-log-action').forEach(button => {
-            button.addEventListener('click', async (event) => {
-                const mediaId = parseInt((event.currentTarget as HTMLElement).getAttribute('data-media-id') || '', 10);
-                if (Number.isNaN(mediaId)) return;
-
-                const media = mediaById.get(mediaId);
-                if (!media) return;
-
-                const logged = await showLogActivityModal({
-                    title: media.title,
-                    contentType: media.content_type || undefined
-                });
-
-                if (logged) {
-                    await this.loadData();
-                    await this.render();
-                }
-            });
-        });
-
-        card.querySelectorAll('.dashboard-quick-log-open-link').forEach(button => {
             button.addEventListener('click', (event) => {
-                event.stopPropagation();
                 const mediaId = parseInt((event.currentTarget as HTMLElement).getAttribute('data-media-id') || '', 10);
                 if (Number.isNaN(mediaId)) return;
 
@@ -294,6 +275,28 @@ export class Dashboard extends Component<DashboardState> {
                         focusMediaId: mediaId
                     }
                 }));
+            });
+        });
+
+        card.querySelectorAll('.dashboard-quick-log-open-link').forEach(button => {
+            button.addEventListener('click', async (event) => {
+                event.stopPropagation();
+                const mediaId = parseInt((event.currentTarget as HTMLElement).getAttribute('data-media-id') || '', 10);
+                if (Number.isNaN(mediaId)) return;
+
+                const media = mediaById.get(mediaId);
+                if (!media) return;
+
+                const logged = await showLogActivityModal({
+                    mediaId: media.id,
+                    title: media.title,
+                    contentType: media.content_type || undefined
+                });
+
+                if (logged) {
+                    await this.loadData();
+                    await this.render();
+                }
             });
         });
     }

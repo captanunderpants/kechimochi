@@ -28,6 +28,19 @@ export class MediaView extends Component<MediaViewState> {
         this.state = { ...this.state, loaded: false };
     }
 
+    public getCurrentDetailLogPrefill(): { mediaId: number, title: string, contentType?: string } | null {
+        if (this.state.viewMode !== 'detail') return null;
+
+        const media = this.state.currentMediaList[this.state.currentIndex];
+        if (!media?.id) return null;
+
+        return {
+            mediaId: media.id,
+            title: media.title,
+            contentType: media.content_type || undefined
+        };
+    }
+
     constructor(container: HTMLElement) {
         super(container, {
             viewMode: 'grid',
@@ -36,7 +49,7 @@ export class MediaView extends Component<MediaViewState> {
             gridFilters: {
                 searchQuery: '',
                 typeFilter: 'All',
-                statusFilter: 'Ongoing',
+                statusFilter: 'Complete',
                 immersionFilter: 'All',
                 sortBy: 'default',
                 sortAscending: false

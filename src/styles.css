@@ -656,6 +656,27 @@ input[type="number"]::-webkit-outer-spin-button {
   line-height: 1.2;
 }
 
+.heatmap-quick-total-metrics {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 0.7rem;
+  min-width: 0;
+}
+
+.heatmap-quick-total-metric-column {
+  display: flex;
+  flex-direction: column;
+  gap: 0.18rem;
+  min-width: 0;
+}
+
+.heatmap-quick-total-metric-column-secondary {
+  align-items: flex-end;
+  text-align: right;
+  justify-self: end;
+}
+
 .heatmap {
   display: flex;
   gap: 2px;

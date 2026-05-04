@@ -1,6 +1,6 @@
 import { Component } from '../../core/component';
 import { html } from '../../core/html';
-import { Media, updateMedia } from '../../api';
+import { Media, formatDuration, updateMedia } from '../../api';
 import { MediaItem } from './MediaItem';
 import { isReadingContentType } from '../../modals/activity';
 
@@ -187,6 +187,23 @@ export class MediaGrid extends Component<MediaGridState> {
         return Math.round(media.total_characters_read / (media.total_time_logged / 60));
     }
 
+    private getSortBadgeLabel(media: Media): string | null {
+        switch (this.state.sortBy) {
+            case 'time':
+                return formatDuration(media.total_time_logged);
+            case 'chars':
+                return `${media.total_characters_read.toLocaleString()} 文字`;
+            case 'speed': {
+                const speed = this.getReadingSpeed(media);
+                return speed > 0 ? `${speed.toLocaleString()} 文字/hr` : 'No speed';
+            }
+            case 'finished':
+                return media.last_activity_date || 'No date';
+            default:
+                return null;
+        }
+    }
+
     private sortMedia(list: Media[]): Media[] {
         const { sortBy, sortAscending } = this.state;
         const dir = sortAscending ? 1 : -1;
@@ -288,7 +305,7 @@ export class MediaGrid extends Component<MediaGridState> {
                 itemWrapper.style.contentVisibility = 'auto';
                 itemWrapper.style.containIntrinsicSize = '180px 320px';
                 
-                const item = new MediaItem(itemWrapper, media, () => this.onMediaClick(media.id!));
+                const item = new MediaItem(itemWrapper, media, () => this.onMediaClick(media.id!), this.getSortBadgeLabel(media));
                 item.render();
 
                 // Right-click context menu

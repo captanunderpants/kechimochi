@@ -3,17 +3,28 @@ import { html } from '../core/html';
 import { 
     importCsv, exportCsv, deleteProfile, 
     clearActivities, wipeEverything, exportMediaCsv, analyzeMediaCsv, 
-    applyMediaImport, switchProfile, listProfiles, getSetting, setSetting 
+    applyMediaImport, switchProfile, listProfiles, getSetting, setSetting, getLogs, ActivitySummary
 } from '../api';
 import { 
     customPrompt, showExportCsvModal, customAlert, customConfirm, 
     showMediaCsvConflictModal, initialProfilePrompt 
 } from '../modals';
+import { READING_TYPES } from '../modals/activity';
 import { open, save } from '@tauri-apps/plugin-dialog';
+
+interface ReadingSpeedReportRow {
+    contentType: string;
+    sessions: number;
+    characters: number;
+    minutes: number;
+    speed: number;
+}
 
 interface ProfileState {
     currentProfile: string;
     theme: string;
+    dayEndTime: string;
+    readingSpeedReport: ReadingSpeedReportRow[];
     loaded: boolean;
 }
 
@@ -22,17 +33,25 @@ export class ProfileView extends Component<ProfileState> {
         super(container, {
             currentProfile: localStorage.getItem('kechimochi_profile') || 'default',
             theme: 'pastel-pink',
+            dayEndTime: '04:00',
+            readingSpeedReport: [],
             loaded: false
         });
     }
 
     async loadData() {
-        const theme = await getSetting('theme') || 'pastel-pink';
+        const [theme, dayEndTime, logs] = await Promise.all([
+            getSetting('theme'),
+            getSetting('day_end_time'),
+            getLogs()
+        ]);
 
         this.state = {
             ...this.state,
             loaded: true,
-            theme
+            theme: theme || 'pastel-pink',
+            dayEndTime: dayEndTime && /^\d{2}:\d{2}$/.test(dayEndTime) ? dayEndTime : '04:00',
+            readingSpeedReport: this.buildReadingSpeedReport(logs)
         };
     }
 
@@ -41,13 +60,46 @@ export class ProfileView extends Component<ProfileState> {
         return val ? parseInt(val) || 15000 : 15000;
     }
 
+    private buildReadingSpeedReport(logs: ActivitySummary[]): ReadingSpeedReportRow[] {
+        const totals = new Map<string, { sessions: number; characters: number; minutes: number }>();
+        for (const type of READING_TYPES) {
+            totals.set(type, { sessions: 0, characters: 0, minutes: 0 });
+        }
+
+        for (const log of logs) {
+            if (!READING_TYPES.includes(log.content_type as typeof READING_TYPES[number])) continue;
+            const row = totals.get(log.content_type)!;
+            row.sessions += 1;
+            row.characters += log.characters_read || 0;
+            row.minutes += log.duration_minutes || 0;
+        }
+
+        return Array.from(totals.entries()).map(([contentType, row]) => ({
+            contentType,
+            sessions: row.sessions,
+            characters: row.characters,
+            minutes: row.minutes,
+            speed: row.characters > 0 && row.minutes > 0 ? Math.round(row.characters / (row.minutes / 60)) : 0
+        }));
+    }
+
+    private renderReadingSpeedReport(rows: ReadingSpeedReportRow[]): string {
+        return rows.map((row) => `
+            <tr>
+                <td>${row.contentType}</td>
+                <td>${row.speed > 0 ? `${row.speed.toLocaleString()} 文字/hour` : 'No data'}</td>
+                <td>${row.sessions > 0 ? row.sessions.toLocaleString() : ''}</td>
+            </tr>
+        `).join('');
+    }
+
     async render() {
         if (!this.state.loaded) {
             await this.loadData();
         }
 
         this.clear();
-        const { currentProfile, theme } = this.state;
+        const { currentProfile, theme, dayEndTime, readingSpeedReport } = this.state;
 
         const content = html`
             <div class="animate-fade-in" style="display: flex; flex-direction: column; gap: 2rem; max-width: 600px; margin: 0 auto; padding-top: 1rem; padding-bottom: 2rem;">
@@ -89,6 +141,31 @@ export class ProfileView extends Component<ProfileState> {
                         <label for="profile-reading-speed" style="font-size: 0.85rem; font-weight: 500;">Default Reading Speed (characters / hour)</label>
                         <input type="number" id="profile-reading-speed" min="100" step="100"
                                style="width: 200px; background: var(--bg-dark); color: var(--text-primary); border: 1px solid var(--border-color); padding: 0.5rem; border-radius: var(--radius-sm); appearance: textfield; -moz-appearance: textfield;" />
+                    </div>
+                    <div style="border-top: 1px solid var(--border-color); padding-top: 1rem;">
+                        <h4 style="margin: 0 0 0.75rem 0; color: var(--text-secondary);">Reading Speed Report Card</h4>
+                        <table class="dashboard-data-table" style="width: 100%;">
+                            <thead>
+                                <tr>
+                                    <th>Media</th>
+                                    <th>Speed</th>
+                                    <th>Sessions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${this.renderReadingSpeedReport(readingSpeedReport)}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="card" style="display: flex; flex-direction: column; gap: 1rem;">
+                    <h3>Activity Settings</h3>
+                    <p style="color: var(--text-secondary); font-size: 0.9rem;">Controls which date is selected by default when opening the activity log modal late at night or early in the morning.</p>
+                    <div style="display: flex; flex-direction: column; gap: 0.5rem;">
+                        <label for="profile-day-end-time" style="font-size: 0.85rem; font-weight: 500;">Day Ends At</label>
+                        <input type="time" id="profile-day-end-time" value="${dayEndTime}" step="60"
+                               style="width: 200px; background: var(--bg-dark); color: var(--text-primary); border: 1px solid var(--border-color); padding: 0.5rem; border-radius: var(--radius-sm);" />
                     </div>
                 </div>
 
@@ -160,6 +237,14 @@ export class ProfileView extends Component<ProfileState> {
         readingSpeedInput.addEventListener('change', async () => {
             const v = parseInt(readingSpeedInput.value);
             if (!isNaN(v) && v >= 100) await setSetting('default_reading_speed', String(v));
+        });
+
+        const dayEndTimeInput = root.querySelector('#profile-day-end-time') as HTMLInputElement;
+        dayEndTimeInput.addEventListener('change', async () => {
+            const nextValue = /^\d{2}:\d{2}$/.test(dayEndTimeInput.value) ? dayEndTimeInput.value : '04:00';
+            dayEndTimeInput.value = nextValue;
+            await setSetting('day_end_time', nextValue);
+            this.state.dayEndTime = nextValue;
         });
 
         root.querySelector('#profile-select-theme')?.addEventListener('change', async (e) => {

@@ -1,17 +1,18 @@
 import { Component } from '../../core/component';
-import { html } from '../../core/html';
+import { escapeHTML, html } from '../../core/html';
 import { Media, readFileBytes } from '../../api';
 
 interface MediaItemState {
     media: Media;
     imgSrc: string | null;
+    badgeLabel: string | null;
 }
 
 export class MediaItem extends Component<MediaItemState> {
     private static imageCache: Map<string, string> = new Map();
 
-    constructor(container: HTMLElement, media: Media, onClick: () => void) {
-        super(container, { media, imgSrc: null });
+    constructor(container: HTMLElement, media: Media, onClick: () => void, badgeLabel: string | null = null) {
+        super(container, { media, imgSrc: null, badgeLabel });
         this.container.addEventListener('click', onClick);
         
         // Lazy load image when visible
@@ -57,10 +58,11 @@ export class MediaItem extends Component<MediaItemState> {
     }
 
     render() {
-        const { media, imgSrc } = this.state;
+        const { media, imgSrc, badgeLabel } = this.state;
         const contentType = media.content_type || 'Unknown';
-        const badgeHtml = (contentType !== 'Unknown' && contentType.trim() !== '')
-            ? `<div class="grid-item-type-badge">${contentType}</div>`
+        const displayBadge = badgeLabel ?? contentType;
+        const badgeHtml = (displayBadge !== 'Unknown' && displayBadge.trim() !== '')
+            ? `<div class="grid-item-type-badge">${escapeHTML(displayBadge)}</div>`
             : '';
         const ledHtml = media.tracking_status !== 'Untracked' 
             ? `<div class="status-led ${this.getTrackingStatusClass(media.tracking_status)}" title="Status: ${media.tracking_status}"></div>` 

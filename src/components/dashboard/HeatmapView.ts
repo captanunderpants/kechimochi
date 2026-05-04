@@ -32,8 +32,21 @@ export class HeatmapView extends Component<HeatmapViewState> {
                         ${quickTotals.map((total) => `
                             <div class="heatmap-quick-total-item">
                                 <span class="heatmap-quick-total-label">${total.label}</span>
-                                <span class="heatmap-quick-total-chars">${total.chars.toLocaleString()} 文字</span>
-                                <span class="heatmap-quick-total-time">${formatDuration(total.minutes)}</span>
+                                ${total.avgChars !== undefined && total.avgMinutes !== undefined ? `
+                                    <div class="heatmap-quick-total-metrics">
+                                        <div class="heatmap-quick-total-metric-column">
+                                            <span class="heatmap-quick-total-chars">${total.chars.toLocaleString()} 文字</span>
+                                            <span class="heatmap-quick-total-time">${formatDuration(total.minutes)}</span>
+                                        </div>
+                                        <div class="heatmap-quick-total-metric-column heatmap-quick-total-metric-column-secondary">
+                                            <span class="heatmap-quick-total-time">Avg ${Math.round(total.avgChars).toLocaleString()} 文字</span>
+                                            <span class="heatmap-quick-total-time">Avg ${formatDuration(total.avgMinutes)}</span>
+                                        </div>
+                                    </div>
+                                ` : `
+                                    <span class="heatmap-quick-total-chars">${total.chars.toLocaleString()} 文字</span>
+                                    <span class="heatmap-quick-total-time">${formatDuration(total.minutes)}</span>
+                                `}
                             </div>
                         `).join('')}
                     </div>
@@ -154,7 +167,7 @@ export class HeatmapView extends Component<HeatmapViewState> {
         });
     }
 
-    private getQuickTotals(): { label: string; minutes: number; chars: number; }[] {
+    private getQuickTotals(): { label: string; minutes: number; chars: number; avgMinutes?: number; avgChars?: number; }[] {
         const today = new Date();
         const todayStr = this.getLocalISODate(today);
 
@@ -179,7 +192,20 @@ export class HeatmapView extends Component<HeatmapViewState> {
             }
         }
 
-        return totals.map(({ label, minutes, chars }) => ({ label, minutes, chars }));
+        const daysIntoMonth = Math.max(today.getDate(), 1);
+        return totals.map(({ label, minutes, chars }) => {
+            if (label !== 'This Month') {
+                return { label, minutes, chars };
+            }
+
+            return {
+                label,
+                minutes,
+                chars,
+                avgMinutes: minutes / daysIntoMonth,
+                avgChars: chars / daysIntoMonth
+            };
+        });
     }
 
     private getLocalISODate(date: Date): string {

@@ -1,4 +1,4 @@
-import { getAllMedia, addLog, addMedia, updateMedia, parseDuration } from '../api';
+import { getAllMedia, addLog, addMedia, updateMedia, parseDuration, getSetting } from '../api';
 import { buildCalendar } from './calendar';
 
 export async function showExportCsvModal(): Promise<{mode: 'all' | 'range', start?: string, end?: string} | null> {
@@ -68,7 +68,33 @@ export function isReadingContentType(contentType: string): boolean {
 
 export { CONTENT_TYPES, READING_TYPES };
 
-export async function showLogActivityModal(prefill?: { title?: string, contentType?: string }): Promise<boolean> {
+function pad(value: number): string {
+    return value.toString().padStart(2, '0');
+}
+
+function getLocalISODate(date: Date): string {
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+function normalizeDayEndTime(raw: string | null): string {
+    return raw && /^\d{2}:\d{2}$/.test(raw) ? raw : '04:00';
+}
+
+function getDefaultActivityDate(dayEndTime: string): string {
+    const now = new Date();
+    const [hours, minutes] = dayEndTime.split(':').map(Number);
+    const cutoff = new Date(now);
+    cutoff.setHours(hours, minutes, 0, 0);
+
+    const selectedDate = new Date(now);
+    if (now < cutoff) {
+        selectedDate.setDate(selectedDate.getDate() - 1);
+    }
+
+    return getLocalISODate(selectedDate);
+}
+
+export async function showLogActivityModal(prefill?: { mediaId?: number, title?: string, contentType?: string }): Promise<boolean> {
     return new Promise(async (resolve) => {
         const overlay = document.createElement('div');
         overlay.className = 'modal-overlay';
@@ -78,9 +104,12 @@ export async function showLogActivityModal(prefill?: { title?: string, contentTy
 
         const mediaList = await getAllMedia();
         const activeMedia = mediaList.filter(m => !['Archived', 'Inactive', 'Finished', 'Completed'].includes(m.status));
+        const exactPrefillMedia = prefill?.mediaId !== undefined
+            ? mediaList.find(m => m.id === prefill.mediaId)
+            : undefined;
 
-        const prefillTitle = prefill?.title || '';
-        const prefillContentType = prefill?.contentType || '';
+        const prefillTitle = prefill?.title || exactPrefillMedia?.title || '';
+        const prefillContentType = prefill?.contentType || exactPrefillMedia?.content_type || '';
         const prefillIsReading = prefillContentType ? isReadingContentType(prefillContentType) : false;
         const prefillIsAnime = prefillContentType === 'Anime';
 
@@ -107,7 +136,7 @@ export async function showLogActivityModal(prefill?: { title?: string, contentTy
                     <div id="episodes-container" style="display: ${prefillIsAnime ? 'flex' : 'none'}; flex-direction: column; gap: 0.5rem;">
                         <label style="font-size: 0.85rem; color: var(--text-secondary);">Number of Episodes</label>
                         <div style="display: flex; align-items: stretch; border: 1px solid var(--border-color); border-radius: var(--radius-sm); overflow: hidden; background: var(--bg-dark);">
-                            <input type="number" id="activity-episodes" min="1" step="1" style="background: transparent; color: var(--text-primary); border: none; padding: 0.5rem; flex: 1; outline: none; appearance: textfield; -moz-appearance: textfield; -webkit-appearance: none; width: 0;" />
+                            <input type="number" id="activity-episodes" min="1" step="1" value="${prefillIsAnime ? '1' : ''}" style="background: transparent; color: var(--text-primary); border: none; padding: 0.5rem; flex: 1; outline: none; appearance: textfield; -moz-appearance: textfield; -webkit-appearance: none; width: 0;" />
                             <div style="display: flex; flex-direction: column; border-left: 1px solid var(--border-color);">
                                 <button type="button" id="episodes-up" style="background: transparent; border: none; border-bottom: 1px solid var(--border-color); color: var(--text-secondary); cursor: pointer; padding: 0 0.5rem; flex: 1; font-size: 0.6rem; line-height: 1; display: flex; align-items: center; justify-content: center;" aria-label="Increase episodes">&#9650;</button>
                                 <button type="button" id="episodes-down" style="background: transparent; border: none; color: var(--text-secondary); cursor: pointer; padding: 0 0.5rem; flex: 1; font-size: 0.6rem; line-height: 1; display: flex; align-items: center; justify-content: center;" aria-label="Decrease episodes">&#9660;</button>
@@ -129,9 +158,8 @@ export async function showLogActivityModal(prefill?: { title?: string, contentTy
                 </form>
             </div>`;
 
-        const pad = (n: number) => n.toString().padStart(2, '0');
-        const today = new Date();
-        let selectedDate = `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`;
+        const dayEndTime = normalizeDayEndTime(await getSetting('day_end_time'));
+        let selectedDate = getDefaultActivityDate(dayEndTime);
         buildCalendar('activity-cal-container', selectedDate, (d) => selectedDate = d);
 
         const contentTypeSelect = overlay.querySelector('#activity-content-type') as HTMLSelectElement;
@@ -144,6 +172,7 @@ export async function showLogActivityModal(prefill?: { title?: string, contentTy
             const ct = contentTypeSelect.value;
             charsContainer.style.display = isReadingContentType(ct) ? 'flex' : 'none';
             episodesContainer.style.display = ct === 'Anime' ? 'flex' : 'none';
+            if (ct === 'Anime' && !episodesInput.value) episodesInput.value = '1';
             if (ct !== 'Anime') episodesInput.value = '';
         };
 
@@ -169,17 +198,47 @@ export async function showLogActivityModal(prefill?: { title?: string, contentTy
             if (cur > 1) episodesInput.value = String(cur - 1);
         });
 
+        if (prefillTitle && prefillContentType) {
+            requestAnimationFrame(() => {
+                const target = isReadingContentType(contentTypeSelect.value)
+                    ? overlay.querySelector('#activity-characters-read') as HTMLInputElement | null
+                    : contentTypeSelect.value === 'Anime'
+                        ? episodesInput
+                        : durationInput;
+                target?.focus();
+                target?.select();
+            });
+        }
+
         const cleanup = () => {
-             overlay.classList.remove('active');
-             setTimeout(() => overlay.remove(), 300);
+            window.removeEventListener('keydown', handleEscape, true);
+            overlay.classList.remove('active');
+            setTimeout(() => overlay.remove(), 300);
         };
 
-        overlay.querySelector('#activity-cancel')!.addEventListener('click', () => { cleanup(); resolve(false); });
+        let settled = false;
+        const finish = (result: boolean) => {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            resolve(result);
+        };
+
+        const handleEscape = (e: KeyboardEvent) => {
+            if (e.key !== 'Escape') return;
+            e.preventDefault();
+            e.stopPropagation();
+            finish(false);
+        };
+
+        window.addEventListener('keydown', handleEscape, true);
+
+        overlay.querySelector('#activity-cancel')!.addEventListener('click', () => finish(false));
         overlay.querySelector('#add-activity-form')!.addEventListener('submit', async (e) => {
             e.preventDefault();
             const mediaTitle = (overlay.querySelector('#activity-media') as HTMLInputElement).value.trim();
             const selectedContentType = contentTypeSelect.value;
-            if (!mediaTitle || !selectedContentType) return;
+            if (!selectedContentType || (!mediaTitle && !exactPrefillMedia)) return;
 
             const episodeCount = parseInt(episodesInput.value) || 0;
             const durationRaw = durationInput.value.trim();
@@ -206,7 +265,7 @@ export async function showLogActivityModal(prefill?: { title?: string, contentTy
             const isReading = isReadingContentType(selectedContentType);
             const charactersRead = isReading ? parseInt((overlay.querySelector('#activity-characters-read') as HTMLInputElement).value) || 0 : 0;
 
-            const existingMedia = mediaList.find(m => m.title.toLowerCase() === mediaTitle.toLowerCase());
+            const existingMedia = exactPrefillMedia || mediaList.find(m => m.title.toLowerCase() === mediaTitle.toLowerCase());
             let mediaId: number;
 
             if (existingMedia?.id) {
@@ -228,8 +287,7 @@ export async function showLogActivityModal(prefill?: { title?: string, contentTy
             }
 
             await addLog({ media_id: mediaId, duration_minutes: durationMinutes, characters_read: charactersRead, date: selectedDate });
-            cleanup();
-            resolve(true);
+            finish(true);
         });
     });
 }

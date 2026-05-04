@@ -1,20 +1,28 @@
+import Chart from 'chart.js/auto';
 import { Component } from '../../core/component';
 import { escapeHTML, html } from '../../core/html';
 import { ActivitySummary, formatDuration } from '../../api';
 import { isReadingContentType } from '../../modals/activity';
-import Chart from 'chart.js/auto';
+
+type TimeBucketMode = 'day' | 'week' | 'month' | 'year';
+type TimeRangeMode = 'week' | 'month' | 'year' | 'all_time';
+type GroupByMode = 'media_type' | 'log_name';
+type ChartType = 'bar' | 'line';
+type BarMetric = 'time' | 'chars';
+type CategoryTableRangeMode = 'daily' | 'weekly' | 'monthly' | 'all_time';
 
 interface ActivityChartsState {
     logs: ActivitySummary[];
-    timeRangeDays: number;
+    timeBucketMode: TimeBucketMode;
+    timeRangeMode: TimeRangeMode;
     timeRangeOffset: number;
-    groupByMode: 'media_type' | 'log_name';
-    pieGroupByMode: 'media_type' | 'log_name';
-    charsGroupByMode: 'media_type' | 'log_name';
-    chartType: 'bar' | 'line';
-    barMetric: 'time' | 'chars';
+    groupByMode: GroupByMode;
+    pieGroupByMode: GroupByMode;
+    charsGroupByMode: GroupByMode;
+    chartType: ChartType;
+    barMetric: BarMetric;
     monthlyStatsYear: number;
-    categoryTableRangeMode: 'daily' | 'weekly' | 'monthly' | 'all_time';
+    categoryTableRangeMode: CategoryTableRangeMode;
     categoryTableRangeOffset: number;
 }
 
@@ -52,6 +60,8 @@ export class ActivityCharts extends Component<ActivityChartsState> {
         const canGoToPrevMonthlyYear = this.state.monthlyStatsYear > earliestLogYear;
         const canGoToNextMonthlyYear = this.state.monthlyStatsYear < currentYear;
         const categoryTable = this.getCategoryTableData();
+        const canGoPrevTimeRange = this.canMoveTimeRangeBackward();
+        const canGoNextTimeRange = this.canMoveTimeRangeForward();
 
         const chartsLayout = html`
             <div style="display: flex; flex-direction: column; gap: 1.25rem;">
@@ -59,14 +69,19 @@ export class ActivityCharts extends Component<ActivityChartsState> {
                     <div class="card dashboard-activity-hero-card">
                         <div style="display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap; margin-bottom: 1rem;">
                             <div style="display: flex; align-items: center; gap: 0.5rem;">
-                                <button class="btn btn-ghost" style="padding: 0.1rem 0.4rem; ${this.state.timeRangeDays === 0 ? 'opacity: 0.3; cursor: default;' : ''}" id="btn-chart-prev">&lt;</button>
+                                <button class="btn btn-ghost" style="padding: 0.1rem 0.4rem; ${!canGoPrevTimeRange ? 'opacity: 0.3; cursor: default;' : ''}" id="btn-chart-prev">&lt;</button>
                                 <h3 style="margin: 0;">Activity Visualization</h3>
-                                <button class="btn btn-ghost" style="padding: 0.1rem 0.4rem; ${this.state.timeRangeOffset === 0 || this.state.timeRangeDays === 0 ? 'opacity: 0.3; cursor: default;' : ''}" id="btn-chart-next">&gt;</button>
+                                <button class="btn btn-ghost" style="padding: 0.1rem 0.4rem; ${!canGoNextTimeRange ? 'opacity: 0.3; cursor: default;' : ''}" id="btn-chart-next">&gt;</button>
                             </div>
                             <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
                                 <button class="btn btn-ghost btn-cycle" id="btn-bar-metric" style="font-size: 0.8rem; padding: 0.3rem 0.6rem;">${this.state.barMetric === 'time' ? 'Time' : '文字'}</button>
                                 <button class="btn btn-ghost btn-cycle" id="btn-chart-type" style="font-size: 0.8rem; padding: 0.3rem 0.6rem;">${this.state.chartType === 'bar' ? 'Bar' : 'Line'}</button>
-                                <button class="btn btn-ghost btn-cycle" id="btn-time-range" style="font-size: 0.8rem; padding: 0.3rem 0.6rem;">${this.state.timeRangeDays === 7 ? 'Weekly' : this.state.timeRangeDays === 30 ? 'Monthly' : this.state.timeRangeDays === 365 ? 'Yearly' : 'All Time'}</button>
+                                <select id="select-time-bucket" title="Inner time unit" style="font-size: 0.8rem; padding: 0.3rem 0.6rem; border-radius: var(--radius-sm); border: 1px solid var(--border-color); background: var(--bg-dark); color: var(--text-primary); outline: none; cursor: pointer;">
+                                    ${this.getTimeBucketOptions()}
+                                </select>
+                                <select id="select-time-range" title="Outer time range" style="font-size: 0.8rem; padding: 0.3rem 0.6rem; border-radius: var(--radius-sm); border: 1px solid var(--border-color); background: var(--bg-dark); color: var(--text-primary); outline: none; cursor: pointer;">
+                                    ${this.getTimeRangeOptions()}
+                                </select>
                                 <button class="btn btn-ghost btn-cycle" id="btn-group-by" style="font-size: 0.8rem; padding: 0.3rem 0.6rem;">${this.state.groupByMode === 'media_type' ? 'By Type' : 'By Media'}</button>
                             </div>
                         </div>
@@ -187,63 +202,30 @@ export class ActivityCharts extends Component<ActivityChartsState> {
     }
 
     private setupListeners(layout: HTMLElement) {
-        const { logs, timeRangeDays, timeRangeOffset } = this.state;
-
-        let earliestDate = '';
-        for (const log of logs) {
-            if (!earliestDate || log.date < earliestDate) earliestDate = log.date;
-        }
-
-        const prevBtn = layout.querySelector('#btn-chart-prev') as HTMLElement | null;
-
-        if (prevBtn && earliestDate) {
-            const today = new Date();
-            let wouldBeEmpty = false;
-            if (timeRangeDays === 0) {
-                wouldBeEmpty = true;
-            } else if (timeRangeDays === 7) {
-                const endDay = new Date(today);
-                endDay.setDate(today.getDate() - (7 * (timeRangeOffset + 1)));
-                const startDay = new Date(endDay);
-                const dow = endDay.getDay();
-                const diff = dow === 0 ? 6 : dow - 1;
-                startDay.setDate(endDay.getDate() - diff);
-                const endStr = this.getLocalISODate(startDay);
-                wouldBeEmpty = earliestDate > endStr;
-            } else if (timeRangeDays === 30) {
-                const targetMonth = new Date(today.getFullYear(), today.getMonth() - (timeRangeOffset + 1), 1);
-                const endOfMonth = new Date(targetMonth.getFullYear(), targetMonth.getMonth() + 1, 0);
-                const endStr = this.getLocalISODate(endOfMonth);
-                wouldBeEmpty = earliestDate > endStr;
-            } else if (timeRangeDays === 365) {
-                const targetYear = today.getFullYear() - (timeRangeOffset + 1);
-                wouldBeEmpty = earliestDate > `${targetYear}-12-31`;
-            }
-            if (wouldBeEmpty) {
-                prevBtn.style.opacity = '0.3';
-                prevBtn.style.cursor = 'default';
-            }
-        }
-
         layout.querySelector('#btn-chart-prev')?.addEventListener('click', () => {
-            if (this.state.timeRangeDays !== 0) {
-                this.onChartParamChange({ timeRangeOffset: this.state.timeRangeOffset + 1 });
-            }
+            if (!this.canMoveTimeRangeBackward()) return;
+            this.onChartParamChange({ timeRangeOffset: this.state.timeRangeOffset + 1 });
         });
 
         layout.querySelector('#btn-chart-next')?.addEventListener('click', () => {
-            if (this.state.timeRangeOffset > 0 && this.state.timeRangeDays !== 0) {
-                this.onChartParamChange({ timeRangeOffset: this.state.timeRangeOffset - 1 });
-            }
+            if (!this.canMoveTimeRangeForward()) return;
+            this.onChartParamChange({ timeRangeOffset: this.state.timeRangeOffset - 1 });
         });
 
         layout.querySelector('#btn-chart-type')?.addEventListener('click', () => {
             this.onChartParamChange({ chartType: this.state.chartType === 'bar' ? 'line' : 'bar' });
         });
 
-        layout.querySelector('#btn-time-range')?.addEventListener('click', () => {
-            const cycle: Record<number, number> = { 7: 30, 30: 365, 365: 0, 0: 7 };
-            this.onChartParamChange({ timeRangeDays: cycle[this.state.timeRangeDays] ?? 7, timeRangeOffset: 0 });
+        layout.querySelector('#select-time-bucket')?.addEventListener('change', (event) => {
+            const timeBucketMode = (event.target as HTMLSelectElement).value as TimeBucketMode;
+            const timeRangeMode = this.getDefaultRangeForBucket(timeBucketMode, this.state.timeRangeMode);
+            this.onChartParamChange({ timeBucketMode, timeRangeMode, timeRangeOffset: 0 });
+        });
+
+        layout.querySelector('#select-time-range')?.addEventListener('change', (event) => {
+            const timeRangeMode = (event.target as HTMLSelectElement).value as TimeRangeMode;
+            const timeBucketMode = this.getDefaultBucketForRange(timeRangeMode, this.state.timeBucketMode);
+            this.onChartParamChange({ timeBucketMode, timeRangeMode, timeRangeOffset: 0 });
         });
 
         layout.querySelector('#btn-group-by')?.addEventListener('click', () => {
@@ -284,7 +266,7 @@ export class ActivityCharts extends Component<ActivityChartsState> {
         });
 
         layout.querySelector('#btn-category-table-range')?.addEventListener('click', () => {
-            const cycle: Record<ActivityChartsState['categoryTableRangeMode'], ActivityChartsState['categoryTableRangeMode']> = {
+            const cycle: Record<CategoryTableRangeMode, CategoryTableRangeMode> = {
                 all_time: 'daily',
                 daily: 'weekly',
                 weekly: 'monthly',
@@ -307,7 +289,7 @@ export class ActivityCharts extends Component<ActivityChartsState> {
         if (this.charsChartInstance) this.charsChartInstance.destroy();
         if (this.barChartInstance) this.barChartInstance.destroy();
 
-        const colors = this.getThemeColors();
+        const palette = this.getThemeColors();
         const range = this.getTimeRangeContext();
         const filteredLogs = this.getLogsInRange(range.validStart, range.validEnd);
         const { pieGroupByMode, charsGroupByMode, groupByMode, chartType, barMetric } = this.state;
@@ -327,11 +309,11 @@ export class ActivityCharts extends Component<ActivityChartsState> {
             }
 
             const bucketIndex = range.getBucketIndex(log.date);
-            if (bucketIndex !== -1) {
-                const barKey = groupByMode === 'media_type' ? log.media_type : log.title;
-                if (!datasetsMap.has(barKey)) datasetsMap.set(barKey, Array(range.labels.length).fill(0));
-                datasetsMap.get(barKey)![bucketIndex] += isCharsMetric ? log.characters_read : log.duration_minutes;
-            }
+            if (bucketIndex === -1) continue;
+
+            const barKey = groupByMode === 'media_type' ? log.media_type : log.title;
+            if (!datasetsMap.has(barKey)) datasetsMap.set(barKey, Array(range.labels.length).fill(0));
+            datasetsMap.get(barKey)![bucketIndex] += isCharsMetric ? log.characters_read : log.duration_minutes;
         }
 
         this.pieChartInstance = new Chart(pieCanvas, {
@@ -340,7 +322,7 @@ export class ActivityCharts extends Component<ActivityChartsState> {
                 labels: Array.from(pieTypeMap.keys()),
                 datasets: [{
                     data: Array.from(pieTypeMap.values()),
-                    backgroundColor: colors,
+                    backgroundColor: this.getColorSet(pieTypeMap.size, palette),
                     borderWidth: 0
                 }]
             },
@@ -358,12 +340,11 @@ export class ActivityCharts extends Component<ActivityChartsState> {
             }
         });
 
-        let pieTotalMinutes = 0;
-        pieTypeMap.forEach((value) => {
-            pieTotalMinutes += value;
-        });
         const pieTotalEl = layout.querySelector('#pie-total');
-        if (pieTotalEl) pieTotalEl.textContent = `Total: ${formatDuration(pieTotalMinutes)}`;
+        if (pieTotalEl) {
+            const total = Array.from(pieTypeMap.values()).reduce((sum, value) => sum + value, 0);
+            pieTotalEl.textContent = `Total: ${formatDuration(total)}`;
+        }
 
         this.charsChartInstance = new Chart(charsCanvas, {
             type: 'doughnut',
@@ -371,7 +352,7 @@ export class ActivityCharts extends Component<ActivityChartsState> {
                 labels: Array.from(charsTypeMap.keys()),
                 datasets: [{
                     data: Array.from(charsTypeMap.values()),
-                    backgroundColor: colors,
+                    backgroundColor: this.getColorSet(charsTypeMap.size, palette),
                     borderWidth: 0
                 }]
             },
@@ -389,18 +370,17 @@ export class ActivityCharts extends Component<ActivityChartsState> {
             }
         });
 
-        let charsTotalCount = 0;
-        charsTypeMap.forEach((value) => {
-            charsTotalCount += value;
-        });
         const charsTotalEl = layout.querySelector('#chars-total');
-        if (charsTotalEl) charsTotalEl.textContent = `Total: ${charsTotalCount.toLocaleString()} 文字`;
+        if (charsTotalEl) {
+            const total = Array.from(charsTypeMap.values()).reduce((sum, value) => sum + value, 0);
+            charsTotalEl.textContent = `Total: ${total.toLocaleString()} 文字`;
+        }
 
         const datasets = Array.from(datasetsMap.entries()).map(([key, data], index) => ({
             label: key,
             data,
-            backgroundColor: colors[index % colors.length],
-            borderColor: colors[index % colors.length],
+            backgroundColor: palette[index % palette.length],
+            borderColor: palette[index % palette.length],
             fill: chartType === 'line' ? false : undefined,
             tension: 0.3
         }));
@@ -413,6 +393,8 @@ export class ActivityCharts extends Component<ActivityChartsState> {
             return sum;
         });
 
+        const showBarTotals = chartType === 'bar' && range.labels.length <= 24;
+
         this.barChartInstance = new Chart(barCanvas, {
             type: chartType,
             data: {
@@ -423,10 +405,18 @@ export class ActivityCharts extends Component<ActivityChartsState> {
                 responsive: true,
                 maintainAspectRatio: false,
                 layout: {
-                    padding: { bottom: chartType === 'bar' ? 28 : 0 }
+                    padding: { bottom: showBarTotals ? 28 : 0 }
                 },
                 scales: {
-                    x: { stacked: chartType === 'bar', grid: { color: '#3f3f4e' }, ticks: { color: '#a0a0b0' } },
+                    x: {
+                        stacked: chartType === 'bar',
+                        grid: { color: '#3f3f4e' },
+                        ticks: {
+                            color: '#a0a0b0',
+                            autoSkip: true,
+                            maxTicksLimit: this.getMaxTickCount(range.labels.length)
+                        }
+                    },
                     y: {
                         stacked: chartType === 'bar',
                         beginAtZero: true,
@@ -451,7 +441,7 @@ export class ActivityCharts extends Component<ActivityChartsState> {
                     }
                 }
             },
-            plugins: chartType === 'bar' ? [{
+            plugins: showBarTotals ? [{
                 id: 'barTotals',
                 afterDraw: (chart: any) => {
                     const { ctx } = chart;
@@ -463,11 +453,10 @@ export class ActivityCharts extends Component<ActivityChartsState> {
                     ctx.textAlign = 'center';
                     ctx.textBaseline = 'top';
                     for (let i = 0; i < labelTotals.length; i++) {
-                        if (labelTotals[i] > 0) {
-                            const x = xAxis.getPixelForValue(i);
-                            const text = isCharsMetric ? labelTotals[i].toLocaleString() : formatDuration(labelTotals[i]);
-                            ctx.fillText(text, x, bottomY + 30);
-                        }
+                        if (labelTotals[i] <= 0) continue;
+                        const x = xAxis.getPixelForValue(i);
+                        const text = isCharsMetric ? labelTotals[i].toLocaleString() : formatDuration(labelTotals[i]);
+                        ctx.fillText(text, x, bottomY + 30);
                     }
                     ctx.restore();
                 }
@@ -575,10 +564,7 @@ export class ActivityCharts extends Component<ActivityChartsState> {
         if (categoryTableRangeMode === 'weekly') {
             const targetDay = new Date(today);
             targetDay.setDate(today.getDate() - (7 * offset));
-            const startDay = new Date(targetDay);
-            const dayOfWeek = targetDay.getDay();
-            const diffToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
-            startDay.setDate(targetDay.getDate() - diffToMonday);
+            const startDay = this.getWeekStart(targetDay);
             const endDay = new Date(startDay);
             endDay.setDate(startDay.getDate() + 6);
 
@@ -603,17 +589,77 @@ export class ActivityCharts extends Component<ActivityChartsState> {
     private canMoveCategoryTableBackward(): boolean {
         if (this.state.categoryTableRangeMode === 'all_time') return false;
 
-        let earliestDate = '';
-        for (const log of this.state.logs) {
-            if (!earliestDate || log.date < earliestDate) earliestDate = log.date;
-        }
+        const earliestDate = this.getEarliestLogDate();
         if (!earliestDate) return false;
 
         const previousRange = this.getCategoryTableRangeContext(this.state.categoryTableRangeOffset + 1);
         return earliestDate <= previousRange.validEnd;
     }
 
-    private getCategoryTableRangeModeLabel(mode: ActivityChartsState['categoryTableRangeMode']): string {
+    private canMoveTimeRangeBackward(): boolean {
+        if (this.state.timeRangeMode === 'all_time') return false;
+
+        const earliestDate = this.getEarliestLogDate();
+        if (!earliestDate) return false;
+
+        const previousRange = this.getTimeRangeContext(this.state.timeRangeOffset + 1);
+        return earliestDate <= previousRange.validEnd;
+    }
+
+    private canMoveTimeRangeForward(): boolean {
+        return this.state.timeRangeMode !== 'all_time' && this.state.timeRangeOffset > 0;
+    }
+
+    private getTimeBucketOptions(): string {
+        const modes: { value: TimeBucketMode; label: string }[] = [
+            { value: 'day', label: 'Days' },
+            { value: 'week', label: 'Weeks' },
+            { value: 'month', label: 'Months' },
+            { value: 'year', label: 'Years' }
+        ];
+        return modes.map((mode) => {
+            const selected = this.state.timeBucketMode === mode.value ? 'selected' : '';
+            return `<option value="${mode.value}" ${selected}>${mode.label}</option>`;
+        }).join('');
+    }
+
+    private getTimeRangeOptions(): string {
+        const modes: { value: TimeRangeMode; label: string }[] = [
+            { value: 'week', label: 'in Week' },
+            { value: 'month', label: 'in Month' },
+            { value: 'year', label: 'in Year' },
+            { value: 'all_time', label: 'All Time' }
+        ];
+        return modes.map((mode) => {
+            const selected = this.state.timeRangeMode === mode.value ? 'selected' : '';
+            return `<option value="${mode.value}" ${selected}>${mode.label}</option>`;
+        }).join('');
+    }
+
+    private isValidTimeRange(bucketMode: TimeBucketMode, rangeMode: TimeRangeMode): boolean {
+        if (bucketMode === 'day') return rangeMode === 'week' || rangeMode === 'month' || rangeMode === 'year';
+        if (bucketMode === 'week') return rangeMode === 'month' || rangeMode === 'year';
+        if (bucketMode === 'month') return rangeMode === 'year';
+        return rangeMode === 'all_time';
+    }
+
+    private getDefaultRangeForBucket(bucketMode: TimeBucketMode, currentRangeMode: TimeRangeMode): TimeRangeMode {
+        if (this.isValidTimeRange(bucketMode, currentRangeMode)) return currentRangeMode;
+        if (bucketMode === 'day') return 'week';
+        if (bucketMode === 'week') return 'month';
+        if (bucketMode === 'month') return 'year';
+        return 'all_time';
+    }
+
+    private getDefaultBucketForRange(rangeMode: TimeRangeMode, currentBucketMode: TimeBucketMode): TimeBucketMode {
+        if (this.isValidTimeRange(currentBucketMode, rangeMode)) return currentBucketMode;
+        if (rangeMode === 'week') return 'day';
+        if (rangeMode === 'month') return 'week';
+        if (rangeMode === 'year') return 'month';
+        return 'year';
+    }
+
+    private getCategoryTableRangeModeLabel(mode: CategoryTableRangeMode): string {
         if (mode === 'daily') return 'Daily';
         if (mode === 'weekly') return 'Weekly';
         if (mode === 'monthly') return 'Monthly';
@@ -637,43 +683,45 @@ export class ActivityCharts extends Component<ActivityChartsState> {
         });
     }
 
-    private getTimeRangeContext(): TimeRangeContext {
-        const { logs, timeRangeDays, timeRangeOffset } = this.state;
+    private getTimeRangeContext(offset = this.state.timeRangeOffset): TimeRangeContext {
+        const { logs } = this.state;
+        const timeRangeMode = this.getDefaultRangeForBucket(this.state.timeBucketMode, this.state.timeRangeMode);
+        const timeBucketMode = this.getDefaultBucketForRange(timeRangeMode, this.state.timeBucketMode);
         const today = new Date();
 
-        if (timeRangeDays === 0) {
+        if (timeRangeMode === 'all_time') {
             const years = new Set<number>();
             for (const log of logs) {
-                years.add(parseInt(log.date.split('-')[0], 10));
+                years.add(parseInt(log.date.slice(0, 4), 10));
             }
             const sortedYears = Array.from(years).sort((a, b) => a - b);
+            const yearIndex = new Map(sortedYears.map((year, index) => [year, index]));
             const labels = sortedYears.map((year) => String(year));
+
             return {
                 validStart: '',
                 validEnd: '9999-12-31',
                 labels,
                 displayLabels: labels,
-                getBucketIndex: (dateStr: string) => {
-                    const year = parseInt(dateStr.split('-')[0], 10);
-                    return sortedYears.indexOf(year);
-                }
+                getBucketIndex: (dateStr: string) => yearIndex.get(parseInt(dateStr.slice(0, 4), 10)) ?? -1
             };
         }
 
-        if (timeRangeDays === 7) {
-            const endDay = new Date(today);
-            endDay.setDate(today.getDate() - (7 * timeRangeOffset));
-            const startDay = new Date(endDay);
-            const dayOfWeek = endDay.getDay();
-            const diffToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
-            startDay.setDate(endDay.getDate() - diffToMonday);
+        if (timeRangeMode === 'week') {
+            const targetDate = new Date(today);
+            targetDate.setDate(today.getDate() - (7 * offset));
+            const startDay = this.getWeekStart(targetDate);
+            const endDay = new Date(startDay);
             endDay.setDate(startDay.getDate() + 6);
 
             const labels: string[] = [];
+            const indexByLabel = new Map<string, number>();
             for (let i = 0; i < 7; i++) {
-                const date = new Date(startDay);
-                date.setDate(startDay.getDate() + i);
-                labels.push(this.getLocalISODate(date));
+                const day = new Date(startDay);
+                day.setDate(startDay.getDate() + i);
+                const label = this.getLocalISODate(day);
+                indexByLabel.set(label, labels.length);
+                labels.push(label);
             }
 
             return {
@@ -681,45 +729,127 @@ export class ActivityCharts extends Component<ActivityChartsState> {
                 validEnd: this.getLocalISODate(endDay),
                 labels,
                 displayLabels: labels.map((label) => label.slice(5)),
-                getBucketIndex: (dateStr: string) => labels.indexOf(dateStr)
+                getBucketIndex: (dateStr: string) => indexByLabel.get(dateStr) ?? -1
             };
         }
 
-        if (timeRangeDays === 30) {
-            const targetMonth = new Date(today.getFullYear(), today.getMonth() - timeRangeOffset, 1);
-            const year = targetMonth.getFullYear();
-            const month = targetMonth.getMonth();
-            const startDay = new Date(year, month, 1);
-            const endDay = new Date(year, month + 1, 0);
-            const totalDays = endDay.getDate();
-            const weeksCount = Math.ceil(totalDays / 7);
-            const labels = Array.from({ length: weeksCount }, (_, index) => `Week ${index + 1}`);
+        if (timeRangeMode === 'month') {
+            const targetMonth = new Date(today.getFullYear(), today.getMonth() - offset, 1);
+            const startDay = new Date(targetMonth.getFullYear(), targetMonth.getMonth(), 1);
+            const endDay = new Date(targetMonth.getFullYear(), targetMonth.getMonth() + 1, 0);
+
+            if (timeBucketMode === 'day') {
+                const labels: string[] = [];
+                const indexByLabel = new Map<string, number>();
+
+                for (let cursor = new Date(startDay); cursor <= endDay; cursor.setDate(cursor.getDate() + 1)) {
+                    const label = this.getLocalISODate(cursor);
+                    labels.push(label);
+                    indexByLabel.set(label, labels.length - 1);
+                }
+
+                return {
+                    validStart: this.getLocalISODate(startDay),
+                    validEnd: this.getLocalISODate(endDay),
+                    labels,
+                    displayLabels: labels.map((label) => label.slice(5)),
+                    getBucketIndex: (dateStr: string) => indexByLabel.get(dateStr) ?? -1
+                };
+            }
+
+            const firstBucketStart = this.getWeekStart(startDay);
+            const lastBucketStart = this.getWeekStart(endDay);
+            const labels: string[] = [];
+            const displayLabels: string[] = [];
+            const indexByLabel = new Map<string, number>();
+
+            for (let cursor = new Date(firstBucketStart); cursor <= lastBucketStart; cursor.setDate(cursor.getDate() + 7)) {
+                const bucketStart = new Date(cursor);
+                const bucketEnd = new Date(cursor);
+                bucketEnd.setDate(bucketEnd.getDate() + 6);
+                const key = this.getLocalISODate(bucketStart);
+                labels.push(key);
+                displayLabels.push(`${this.getShortMonthDay(bucketStart)}-${this.getShortMonthDay(bucketEnd)}`);
+                indexByLabel.set(key, labels.length - 1);
+            }
 
             return {
                 validStart: this.getLocalISODate(startDay),
                 validEnd: this.getLocalISODate(endDay),
                 labels,
-                displayLabels: labels,
+                displayLabels,
                 getBucketIndex: (dateStr: string) => {
                     if (dateStr < this.getLocalISODate(startDay) || dateStr > this.getLocalISODate(endDay)) return -1;
-                    const date = new Date(dateStr + 'T00:00:00');
-                    const firstDayWeekday = startDay.getDay();
-                    const offset = firstDayWeekday === 0 ? 6 : firstDayWeekday - 1;
-                    return Math.floor((date.getDate() + offset - 1) / 7);
+                    const bucketKey = this.getLocalISODate(this.getWeekStart(this.parseLocalDate(dateStr)));
+                    return indexByLabel.get(bucketKey) ?? -1;
                 }
             };
         }
 
-        const targetYear = today.getFullYear() - timeRangeOffset;
+        const targetYear = today.getFullYear() - offset;
+        const yearStart = `${targetYear}-01-01`;
+        const yearEnd = `${targetYear}-12-31`;
+
+        if (timeBucketMode === 'day') {
+            const startDay = new Date(targetYear, 0, 1);
+            const endDay = new Date(targetYear, 11, 31);
+            const labels: string[] = [];
+            const indexByLabel = new Map<string, number>();
+
+            for (let cursor = new Date(startDay); cursor <= endDay; cursor.setDate(cursor.getDate() + 1)) {
+                const label = this.getLocalISODate(cursor);
+                labels.push(label);
+                indexByLabel.set(label, labels.length - 1);
+            }
+
+            return {
+                validStart: yearStart,
+                validEnd: yearEnd,
+                labels,
+                displayLabels: labels.map((label) => label.slice(5)),
+                getBucketIndex: (dateStr: string) => indexByLabel.get(dateStr) ?? -1
+            };
+        }
+
+        if (timeBucketMode === 'week') {
+            const startDay = new Date(targetYear, 0, 1);
+            const endDay = new Date(targetYear, 11, 31);
+            const firstBucketStart = this.getWeekStart(startDay);
+            const lastBucketStart = this.getWeekStart(endDay);
+            const labels: string[] = [];
+            const displayLabels: string[] = [];
+            const indexByLabel = new Map<string, number>();
+
+            for (let cursor = new Date(firstBucketStart); cursor <= lastBucketStart; cursor.setDate(cursor.getDate() + 7)) {
+                const bucketStart = new Date(cursor);
+                const key = this.getLocalISODate(bucketStart);
+                labels.push(key);
+                displayLabels.push(this.getShortMonthDay(bucketStart));
+                indexByLabel.set(key, labels.length - 1);
+            }
+
+            return {
+                validStart: yearStart,
+                validEnd: yearEnd,
+                labels,
+                displayLabels,
+                getBucketIndex: (dateStr: string) => {
+                    if (dateStr < yearStart || dateStr > yearEnd) return -1;
+                    const bucketKey = this.getLocalISODate(this.getWeekStart(this.parseLocalDate(dateStr)));
+                    return indexByLabel.get(bucketKey) ?? -1;
+                }
+            };
+        }
+
         const labels = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
         return {
-            validStart: `${targetYear}-01-01`,
-            validEnd: `${targetYear}-12-31`,
+            validStart: yearStart,
+            validEnd: yearEnd,
             labels,
             displayLabels: labels,
             getBucketIndex: (dateStr: string) => {
-                if (dateStr < `${targetYear}-01-01` || dateStr > `${targetYear}-12-31`) return -1;
-                return parseInt(dateStr.split('-')[1], 10) - 1;
+                if (dateStr < yearStart || dateStr > yearEnd) return -1;
+                return parseInt(dateStr.slice(5, 7), 10) - 1;
             }
         };
     }
@@ -731,18 +861,173 @@ export class ActivityCharts extends Component<ActivityChartsState> {
 
     private getThemeColors(): string[] {
         const style = getComputedStyle(document.body);
-        return [
+        const base = [
             style.getPropertyValue('--chart-1').trim() || '#f4a6b8',
             style.getPropertyValue('--chart-2').trim() || '#b8cdda',
             style.getPropertyValue('--chart-3').trim() || '#e0bbe4',
             style.getPropertyValue('--chart-4').trim() || '#957DAD',
             style.getPropertyValue('--chart-5').trim() || '#D291BC'
         ];
+
+        const variants = [
+            { hueShift: 0, lightnessShift: 0, saturationShift: 0 },
+            { hueShift: 14, lightnessShift: 8, saturationShift: 6 },
+            { hueShift: -14, lightnessShift: -8, saturationShift: 4 },
+            { hueShift: 28, lightnessShift: 12, saturationShift: -2 },
+            { hueShift: -28, lightnessShift: -12, saturationShift: 10 },
+            { hueShift: 42, lightnessShift: 6, saturationShift: 12 },
+            { hueShift: -42, lightnessShift: -4, saturationShift: -6 },
+            { hueShift: 60, lightnessShift: 14, saturationShift: 2 },
+            { hueShift: -60, lightnessShift: -14, saturationShift: 8 },
+            { hueShift: 84, lightnessShift: 4, saturationShift: -10 }
+        ];
+
+        const palette: string[] = [];
+        for (const variant of variants) {
+            for (const color of base) {
+                palette.push(this.adjustColor(color, variant.hueShift, variant.lightnessShift, variant.saturationShift));
+            }
+        }
+
+        return palette;
+    }
+
+    private getColorSet(count: number, palette: string[]): string[] {
+        const colors: string[] = [];
+        for (let i = 0; i < count; i++) {
+            colors.push(palette[i % palette.length]);
+        }
+        return colors;
+    }
+
+    private adjustColor(color: string, hueShift: number, lightnessShift: number, saturationShift: number): string {
+        const rgb = this.resolveColor(color);
+        const hsl = this.rgbToHsl(rgb.r, rgb.g, rgb.b);
+        const hue = (hsl.h + hueShift + 360) % 360;
+        const saturation = this.clamp(hsl.s + saturationShift, 25, 95);
+        const lightness = this.clamp(hsl.l + lightnessShift, 22, 78);
+        const adjusted = this.hslToRgb(hue, saturation, lightness);
+        return `rgb(${adjusted.r}, ${adjusted.g}, ${adjusted.b})`;
+    }
+
+    private resolveColor(color: string): { r: number; g: number; b: number } {
+        const probe = document.createElement('div');
+        probe.style.color = color;
+        probe.style.display = 'none';
+        document.body.appendChild(probe);
+        const resolved = getComputedStyle(probe).color;
+        probe.remove();
+
+        const match = resolved.match(/^rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+        if (!match) return { r: 127, g: 127, b: 127 };
+        return { r: Number(match[1]), g: Number(match[2]), b: Number(match[3]) };
+    }
+
+    private rgbToHsl(r: number, g: number, b: number): { h: number; s: number; l: number } {
+        const red = r / 255;
+        const green = g / 255;
+        const blue = b / 255;
+        const max = Math.max(red, green, blue);
+        const min = Math.min(red, green, blue);
+        const lightness = (max + min) / 2;
+        const delta = max - min;
+
+        if (delta === 0) {
+            return { h: 0, s: 0, l: lightness * 100 };
+        }
+
+        const saturation = lightness > 0.5
+            ? delta / (2 - max - min)
+            : delta / (max + min);
+
+        let hue = 0;
+        switch (max) {
+            case red:
+                hue = ((green - blue) / delta + (green < blue ? 6 : 0)) * 60;
+                break;
+            case green:
+                hue = ((blue - red) / delta + 2) * 60;
+                break;
+            default:
+                hue = ((red - green) / delta + 4) * 60;
+                break;
+        }
+
+        return { h: hue, s: saturation * 100, l: lightness * 100 };
+    }
+
+    private hslToRgb(h: number, s: number, l: number): { r: number; g: number; b: number } {
+        const saturation = s / 100;
+        const lightness = l / 100;
+        const chroma = (1 - Math.abs(2 * lightness - 1)) * saturation;
+        const huePrime = h / 60;
+        const x = chroma * (1 - Math.abs((huePrime % 2) - 1));
+
+        let red = 0;
+        let green = 0;
+        let blue = 0;
+
+        if (huePrime >= 0 && huePrime < 1) {
+            red = chroma; green = x;
+        } else if (huePrime < 2) {
+            red = x; green = chroma;
+        } else if (huePrime < 3) {
+            green = chroma; blue = x;
+        } else if (huePrime < 4) {
+            green = x; blue = chroma;
+        } else if (huePrime < 5) {
+            red = x; blue = chroma;
+        } else {
+            red = chroma; blue = x;
+        }
+
+        const match = lightness - chroma / 2;
+        return {
+            r: Math.round((red + match) * 255),
+            g: Math.round((green + match) * 255),
+            b: Math.round((blue + match) * 255)
+        };
+    }
+
+    private getMaxTickCount(labelCount: number): number {
+        if (labelCount > 200) return 16;
+        if (labelCount > 60) return 14;
+        if (labelCount > 24) return 12;
+        return 10;
+    }
+
+    private getEarliestLogDate(): string {
+        let earliestDate = '';
+        for (const log of this.state.logs) {
+            if (!earliestDate || log.date < earliestDate) earliestDate = log.date;
+        }
+        return earliestDate;
+    }
+
+    private getWeekStart(date: Date): Date {
+        const weekStart = new Date(date);
+        const day = weekStart.getDay();
+        const diffToMonday = day === 0 ? 6 : day - 1;
+        weekStart.setDate(weekStart.getDate() - diffToMonday);
+        weekStart.setHours(0, 0, 0, 0);
+        return weekStart;
+    }
+
+    private getShortMonthDay(date: Date): string {
+        return `${String(date.getMonth() + 1).padStart(2, '0')}/${String(date.getDate()).padStart(2, '0')}`;
+    }
+
+    private parseLocalDate(dateStr: string): Date {
+        return new Date(`${dateStr}T00:00:00`);
     }
 
     private getLocalISODate(date: Date): string {
         const pad = (value: number) => value.toString().padStart(2, '0');
         return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+    }
+
+    private clamp(value: number, min: number, max: number): number {
+        return Math.min(max, Math.max(min, value));
     }
 
     public destroy() {
