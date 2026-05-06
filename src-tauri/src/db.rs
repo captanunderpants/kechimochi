@@ -84,11 +84,57 @@ fn create_activity_logs_table(conn: &Connection) -> Result<()> {
         [],
     )?;
     let _ = conn.execute("ALTER TABLE main.activity_logs ADD COLUMN characters_read INTEGER DEFAULT 0", []);
-    // Indexes for fast aggregation and join on media_id, and date-range queries
+    Ok(())
+}
+
+fn consolidate_duplicate_activity_logs(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "
+        CREATE TEMP TABLE IF NOT EXISTS log_rollups AS
+        SELECT
+            MIN(id) AS keep_id,
+            media_id,
+            date,
+            SUM(duration_minutes) AS total_minutes,
+            SUM(COALESCE(characters_read, 0)) AS total_chars,
+            COUNT(*) AS log_count
+        FROM main.activity_logs
+        GROUP BY media_id, date;
+
+        UPDATE main.activity_logs
+        SET
+            duration_minutes = (
+                SELECT total_minutes
+                FROM log_rollups
+                WHERE keep_id = activity_logs.id
+            ),
+            characters_read = (
+                SELECT total_chars
+                FROM log_rollups
+                WHERE keep_id = activity_logs.id
+            )
+        WHERE id IN (
+            SELECT keep_id
+            FROM log_rollups
+            WHERE log_count > 1
+        );
+
+        DELETE FROM main.activity_logs
+        WHERE id NOT IN (SELECT keep_id FROM log_rollups);
+
+        DROP TABLE log_rollups;
+        ",
+    )?;
+    Ok(())
+}
+
+fn create_activity_logs_indexes(conn: &Connection) -> Result<()> {
+    // Indexes for fast aggregation and join on media_id, date-range queries, and one row per media per day.
     conn.execute_batch("
         CREATE INDEX IF NOT EXISTS main.idx_logs_media_id ON activity_logs(media_id);
         CREATE INDEX IF NOT EXISTS main.idx_logs_date ON activity_logs(date);
         CREATE INDEX IF NOT EXISTS main.idx_logs_media_date ON activity_logs(media_id, date);
+        CREATE UNIQUE INDEX IF NOT EXISTS main.idx_logs_media_date_unique ON activity_logs(media_id, date);
     ")?;
     Ok(())
 }
@@ -107,6 +153,8 @@ fn create_settings_table(conn: &Connection) -> Result<()> {
 pub fn create_tables(conn: &Connection) -> Result<()> {
     create_shared_media_table(conn)?;
     create_activity_logs_table(conn)?;
+    consolidate_duplicate_activity_logs(conn)?;
+    create_activity_logs_indexes(conn)?;
     create_settings_table(conn)?;
     migrate_content_types(conn)?;
     Ok(())
@@ -302,11 +350,50 @@ pub fn delete_media(conn: &Connection, id: i64) -> Result<()> {
 
 // Activity Log Operations
 pub fn add_log(conn: &Connection, log: &ActivityLog) -> Result<i64> {
-    conn.execute(
-        "INSERT INTO main.activity_logs (media_id, duration_minutes, characters_read, date) VALUES (?1, ?2, ?3, ?4)",
-        params![log.media_id, log.duration_minutes, log.characters_read, log.date],
-    )?;
-    Ok(conn.last_insert_rowid())
+    let existing_id = conn.query_row(
+        "SELECT id
+         FROM main.activity_logs
+         WHERE media_id = ?1 AND date = ?2
+         ORDER BY id ASC
+         LIMIT 1",
+        params![log.media_id, log.date],
+        |row| row.get::<_, i64>(0),
+    );
+
+    match existing_id {
+        Ok(id) => {
+            conn.execute(
+                "UPDATE main.activity_logs
+                 SET
+                    duration_minutes = (
+                        SELECT COALESCE(SUM(duration_minutes), 0)
+                        FROM main.activity_logs
+                        WHERE media_id = ?1 AND date = ?2
+                    ) + ?3,
+                    characters_read = (
+                        SELECT COALESCE(SUM(characters_read), 0)
+                        FROM main.activity_logs
+                        WHERE media_id = ?1 AND date = ?2
+                    ) + ?4
+                 WHERE id = ?5",
+                params![log.media_id, log.date, log.duration_minutes, log.characters_read, id],
+            )?;
+            conn.execute(
+                "DELETE FROM main.activity_logs
+                 WHERE media_id = ?1 AND date = ?2 AND id != ?3",
+                params![log.media_id, log.date, id],
+            )?;
+            Ok(id)
+        }
+        Err(rusqlite::Error::QueryReturnedNoRows) => {
+            conn.execute(
+                "INSERT INTO main.activity_logs (media_id, duration_minutes, characters_read, date) VALUES (?1, ?2, ?3, ?4)",
+                params![log.media_id, log.duration_minutes, log.characters_read, log.date],
+            )?;
+            Ok(conn.last_insert_rowid())
+        }
+        Err(e) => Err(e),
+    }
 }
 
 pub fn delete_log(conn: &Connection, id: i64) -> Result<()> {
@@ -315,10 +402,54 @@ pub fn delete_log(conn: &Connection, id: i64) -> Result<()> {
 }
 
 pub fn update_log(conn: &Connection, id: i64, duration_minutes: f64, characters_read: i64, date: &str) -> Result<()> {
-    conn.execute(
-        "UPDATE main.activity_logs SET duration_minutes = ?1, characters_read = ?2, date = ?3 WHERE id = ?4",
-        params![duration_minutes, characters_read, date, id],
+    let media_id = conn.query_row(
+        "SELECT media_id FROM main.activity_logs WHERE id = ?1",
+        params![id],
+        |row| row.get::<_, i64>(0),
     )?;
+
+    let existing_id = conn.query_row(
+        "SELECT id
+         FROM main.activity_logs
+         WHERE media_id = ?1 AND date = ?2 AND id != ?3
+         ORDER BY id ASC
+         LIMIT 1",
+        params![media_id, date, id],
+        |row| row.get::<_, i64>(0),
+    );
+
+    match existing_id {
+        Ok(keep_id) => {
+            conn.execute(
+                "UPDATE main.activity_logs
+                 SET
+                    duration_minutes = (
+                        SELECT COALESCE(SUM(duration_minutes), 0)
+                        FROM main.activity_logs
+                        WHERE media_id = ?1 AND date = ?2 AND id != ?3
+                    ) + ?4,
+                    characters_read = (
+                        SELECT COALESCE(SUM(characters_read), 0)
+                        FROM main.activity_logs
+                        WHERE media_id = ?1 AND date = ?2 AND id != ?3
+                    ) + ?5
+                 WHERE id = ?6",
+                params![media_id, date, id, duration_minutes, characters_read, keep_id],
+            )?;
+            conn.execute(
+                "DELETE FROM main.activity_logs
+                 WHERE (media_id = ?1 AND date = ?2 AND id != ?3) OR id = ?4",
+                params![media_id, date, keep_id, id],
+            )?;
+        }
+        Err(rusqlite::Error::QueryReturnedNoRows) => {
+            conn.execute(
+                "UPDATE main.activity_logs SET duration_minutes = ?1, characters_read = ?2, date = ?3 WHERE id = ?4",
+                params![duration_minutes, characters_read, date, id],
+            )?;
+        }
+        Err(e) => return Err(e),
+    }
     Ok(())
 }
 
@@ -612,6 +743,60 @@ mod tests {
     }
 
     #[test]
+    fn test_add_log_merges_same_media_and_date() {
+        let conn = setup_test_db();
+        let media_id = add_media_with_id(&conn, &sample_media("同日ログ")).unwrap();
+
+        let first_id = add_log(&conn, &ActivityLog {
+            id: None,
+            media_id,
+            duration_minutes: 25.0,
+            characters_read: 1200,
+            date: "2024-03-01".to_string(),
+        }).unwrap();
+        let second_id = add_log(&conn, &ActivityLog {
+            id: None,
+            media_id,
+            duration_minutes: 35.5,
+            characters_read: 800,
+            date: "2024-03-01".to_string(),
+        }).unwrap();
+
+        assert_eq!(second_id, first_id);
+        let logs = get_logs(&conn).unwrap();
+        assert_eq!(logs.len(), 1);
+        assert_eq!(logs[0].id, Some(first_id));
+        assert!((logs[0].duration_minutes - 60.5).abs() < 1e-9);
+        assert_eq!(logs[0].characters_read, 2000);
+        assert_eq!(logs[0].date, "2024-03-01");
+    }
+
+    #[test]
+    fn test_add_log_keeps_same_date_different_media_separate() {
+        let conn = setup_test_db();
+        let first_media_id = add_media_with_id(&conn, &sample_media("同日A")).unwrap();
+        let second_media_id = add_media_with_id(&conn, &sample_media("同日B")).unwrap();
+
+        add_log(&conn, &ActivityLog {
+            id: None,
+            media_id: first_media_id,
+            duration_minutes: 25.0,
+            characters_read: 1200,
+            date: "2024-03-01".to_string(),
+        }).unwrap();
+        add_log(&conn, &ActivityLog {
+            id: None,
+            media_id: second_media_id,
+            duration_minutes: 35.5,
+            characters_read: 800,
+            date: "2024-03-01".to_string(),
+        }).unwrap();
+
+        let logs = get_logs(&conn).unwrap();
+        assert_eq!(logs.len(), 2);
+    }
+
+    #[test]
     fn test_get_heatmap_aggregation() {
         let conn = setup_test_db();
         let media = sample_media("ハイキュー");
@@ -756,6 +941,7 @@ mod tests {
         assert!(index_names.contains(&"idx_logs_media_id".to_string()), "Missing idx_logs_media_id");
         assert!(index_names.contains(&"idx_logs_date".to_string()), "Missing idx_logs_date");
         assert!(index_names.contains(&"idx_logs_media_date".to_string()), "Missing idx_logs_media_date");
+        assert!(index_names.contains(&"idx_logs_media_date_unique".to_string()), "Missing idx_logs_media_date_unique");
     }
 
     // ── delete_log ────────────────────────────────────────────────────────────
@@ -797,6 +983,35 @@ mod tests {
         assert!((logs[0].duration_minutes - 90.5).abs() < 1e-9);
         assert_eq!(logs[0].characters_read, 1500);
         assert_eq!(logs[0].date, "2024-05-15");
+    }
+
+    #[test]
+    fn test_update_log_merges_same_media_and_date() {
+        let conn = setup_test_db();
+        let media_id = add_media_with_id(&conn, &sample_media("更新マージ")).unwrap();
+        let keep_id = add_log(&conn, &ActivityLog {
+            id: None,
+            media_id,
+            duration_minutes: 30.0,
+            characters_read: 1000,
+            date: "2024-05-01".to_string(),
+        }).unwrap();
+        let moved_id = add_log(&conn, &ActivityLog {
+            id: None,
+            media_id,
+            duration_minutes: 45.0,
+            characters_read: 2000,
+            date: "2024-05-02".to_string(),
+        }).unwrap();
+
+        update_log(&conn, moved_id, 60.0, 3000, "2024-05-01").unwrap();
+
+        let logs = get_logs(&conn).unwrap();
+        assert_eq!(logs.len(), 1);
+        assert_eq!(logs[0].id, Some(keep_id));
+        assert!((logs[0].duration_minutes - 90.0).abs() < 1e-9);
+        assert_eq!(logs[0].characters_read, 4000);
+        assert_eq!(logs[0].date, "2024-05-01");
     }
 
     // ── clear_activities ─────────────────────────────────────────────────────
@@ -940,4 +1155,3 @@ mod tests {
         assert_eq!(media[1].title, "アーカイブ済み");
     }
 }
-

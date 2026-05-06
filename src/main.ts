@@ -1,6 +1,7 @@
 import { Dashboard } from './components/dashboard';
 import { MediaView } from './components/media_view';
 import { ProfileView } from './components/profile';
+import { StatisticsView } from './components/statistics';
 import { 
     switchProfile, deleteProfile, listProfiles, 
     getUsername, getSetting 
@@ -28,12 +29,15 @@ function applyCachedTheme(profileName: string | null): void {
 
 applyCachedTheme(localStorage.getItem('kechimochi_profile'));
 
+type AppView = 'dashboard' | 'media' | 'statistics' | 'profile';
+
 class App {
-    private currentView: 'dashboard' | 'media' | 'profile' = 'dashboard';
+    private currentView: AppView = 'dashboard';
     private currentProfile: string = localStorage.getItem('kechimochi_profile') || '';
     
     private dashboard: Dashboard;
     private mediaView: MediaView;
+    private statisticsView: StatisticsView;
     private profileView: ProfileView;
     
     private viewContainer: HTMLElement;
@@ -47,6 +51,7 @@ class App {
 
         this.dashboard = new Dashboard(this.viewContainer);
         this.mediaView = new MediaView(this.viewContainer);
+        this.statisticsView = new StatisticsView(this.viewContainer);
         this.profileView = new ProfileView(this.viewContainer);
 
         this.init();
@@ -211,7 +216,7 @@ class App {
         }
     }
 
-    private switchView(view: 'dashboard' | 'media' | 'profile') {
+    private switchView(view: AppView) {
         this.currentView = view;
         
         this.navLinks.forEach(n => {
@@ -230,6 +235,10 @@ class App {
         else if (this.currentView === 'media') {
             this.mediaView.resetLoaded();
             this.mediaView.render();
+        }
+        else if (this.currentView === 'statistics') {
+            this.statisticsView.resetLoaded();
+            this.statisticsView.render();
         }
         else if (this.currentView === 'profile') this.profileView.render();
     }
