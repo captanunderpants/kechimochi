@@ -6,6 +6,12 @@ import { isReadingContentType } from '../modals/activity';
 import { StatsCard } from './dashboard/StatsCard';
 import { HeatmapView } from './dashboard/HeatmapView';
 import { ActivityCharts } from './dashboard/ActivityCharts';
+import { buildDashboardSnapshot } from './dashboard/snapshot';
+
+interface DashboardOptions {
+    asOfDate?: string;
+    readOnly?: boolean;
+}
 
 interface DashboardState {
     logs: ActivitySummary[];
@@ -33,6 +39,7 @@ export class Dashboard extends Component<DashboardState> {
     private loaded: boolean = false;
     private chartsContainerEl: HTMLElement | null = null;
     private heatmapContainerEl: HTMLElement | null = null;
+    private readonly options: DashboardOptions;
 
     public resetLoaded() {
         this.loaded = false;
@@ -58,7 +65,7 @@ export class Dashboard extends Component<DashboardState> {
         this.chartsContainerEl.innerHTML = '';
         this.activeChartsComponent = new ActivityCharts(
             this.chartsContainerEl,
-            { logs: this.state.logs, ...this.state.chartParams },
+            { logs: this.state.logs, referenceDate: this.options.asOfDate, ...this.state.chartParams },
             (newParams) => {
                 this.setState({ chartParams: { ...this.state.chartParams, ...newParams } });
             }
@@ -69,17 +76,23 @@ export class Dashboard extends Component<DashboardState> {
     private rerenderHeatmap(): void {
         if (!this.heatmapContainerEl) return;
         this.heatmapContainerEl.innerHTML = '';
-        new HeatmapView(this.heatmapContainerEl, { heatmapData: this.state.heatmapData, year: this.state.currentHeatmapYear, logs: this.state.logs }, (dir) => {
+        new HeatmapView(this.heatmapContainerEl, {
+            heatmapData: this.state.heatmapData,
+            year: this.state.currentHeatmapYear,
+            logs: this.state.logs,
+            referenceDate: this.options.asOfDate
+        }, (dir) => {
             this.setState({ currentHeatmapYear: this.state.currentHeatmapYear + dir });
         }).render();
     }
 
-    constructor(container: HTMLElement) {
+    constructor(container: HTMLElement, options: DashboardOptions = {}) {
+        const referenceDate = options.asOfDate ? Dashboard.parseLocalDate(options.asOfDate) : new Date();
         super(container, {
             logs: [],
             heatmapData: [],
             mediaList: [],
-            currentHeatmapYear: new Date().getFullYear(),
+            currentHeatmapYear: referenceDate.getFullYear(),
             chartParams: {
                 timeBucketMode: 'day',
                 timeRangeMode: 'week',
@@ -89,11 +102,12 @@ export class Dashboard extends Component<DashboardState> {
                 charsGroupByMode: 'log_name',
                 chartType: 'bar',
                 barMetric: 'time',
-                monthlyStatsYear: new Date().getFullYear(),
+                monthlyStatsYear: referenceDate.getFullYear(),
                 categoryTableRangeMode: 'all_time',
                 categoryTableRangeOffset: 0
             }
         });
+        this.options = options;
     }
 
     async loadData() {
@@ -103,7 +117,11 @@ export class Dashboard extends Component<DashboardState> {
                 getHeatmap(),
                 getAllMedia()
             ]);
-            this.state = { ...this.state, logs, heatmapData, mediaList };
+            if (this.options.asOfDate) {
+                this.state = { ...this.state, ...buildDashboardSnapshot(logs, mediaList, this.options.asOfDate) };
+            } else {
+                this.state = { ...this.state, logs, heatmapData, mediaList };
+            }
             this.loaded = true;
         } catch (e) {
             console.error("Dashboard failed to load data", e);
@@ -129,7 +147,11 @@ export class Dashboard extends Component<DashboardState> {
 
         const statsContainer = html`<div class="card" id="stats-box-container" style="display: flex; flex-direction: column;"></div>`;
         topRow.appendChild(statsContainer);
-        new StatsCard(statsContainer, { logs: this.state.logs, mediaList: this.state.mediaList }).render();
+        new StatsCard(statsContainer, {
+            logs: this.state.logs,
+            mediaList: this.state.mediaList,
+            referenceDate: this.options.asOfDate
+        }).render();
 
         const heatmapContainer = html`<div id="heatmap-container" style="min-width: 0;"></div>`;
         topRow.appendChild(heatmapContainer);
@@ -165,11 +187,13 @@ export class Dashboard extends Component<DashboardState> {
                                                 <span class="dashboard-quick-log-type">${contentType}</span>
                                             </div>
                                         </button>
-                                        <button type="button" class="dashboard-quick-log-open-link" data-media-id="${media.id}" aria-label="Log activity for ${title}">
-                                            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                                                <path d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6V5Z" fill="currentColor"></path>
-                                            </svg>
-                                        </button>
+                                        ${this.options.readOnly ? '' : `
+                                            <button type="button" class="dashboard-quick-log-open-link" data-media-id="${media.id}" aria-label="Log activity for ${title}">
+                                                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                                                    <path d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6V5Z" fill="currentColor"></path>
+                                                </svg>
+                                            </button>
+                                        `}
                                     </div>
                                 `;
                             }).join('') : `
@@ -193,20 +217,22 @@ export class Dashboard extends Component<DashboardState> {
             <div class="card">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
                     <h3 style="margin: 0;">Recent Activity</h3>
-                    <button class="btn btn-ghost" id="btn-edit-logs" style="font-size: 0.8rem; padding: 0.3rem 0.6rem;">Edit Logs</button>
+                    ${this.options.readOnly ? '' : `<button class="btn btn-ghost" id="btn-edit-logs" style="font-size: 0.8rem; padding: 0.3rem 0.6rem;">Edit Logs</button>`}
                 </div>
                 <div id="recent-logs-list" style="display: flex; flex-direction: column; gap: 0.5rem;"></div>
             </div>
         `;
         root.appendChild(logsCard);
 
-        logsCard.querySelector('#btn-edit-logs')?.addEventListener('click', async () => {
-            const changed = await showLogEditorModal();
-            if (changed) {
-                await this.loadData();
-                await this.render();
-            }
-        });
+        if (!this.options.readOnly) {
+            logsCard.querySelector('#btn-edit-logs')?.addEventListener('click', async () => {
+                const changed = await showLogEditorModal();
+                if (changed) {
+                    await this.loadData();
+                    await this.render();
+                }
+            });
+        }
 
         this.renderLogs(logsCard.querySelector('#recent-logs-list') as HTMLElement);
     }
@@ -322,22 +348,24 @@ export class Dashboard extends Component<DashboardState> {
                 </div>
                 <div style="display: flex; align-items: center; gap: 1rem;">
                     <div style="color: var(--text-secondary);">${log.date}</div>
-                    <button class="btn btn-danger btn-sm delete-log-btn" data-id="${log.id}" style="padding: 0.3rem 0.6rem; font-size: 0.75rem; background-color: #ff4757 !important; color: #ffffff !important; border: none; cursor: pointer;">Delete</button>
+                    ${this.options.readOnly ? '' : `<button class="btn btn-danger btn-sm delete-log-btn" data-id="${log.id}" style="padding: 0.3rem 0.6rem; font-size: 0.75rem; background-color: #ff4757 !important; color: #ffffff !important; border: none; cursor: pointer;">Delete</button>`}
                 </div>
             </div>
         `).join('');
 
-        list.querySelectorAll('.delete-log-btn').forEach(btn => {
-            btn.addEventListener('click', async (e) => {
-                const id = parseInt((e.target as HTMLElement).getAttribute('data-id')!);
-                const confirm = await customConfirm("Delete Log", "Are you sure you want to permanently delete this log entry?");
-                if (confirm) {
-                    await deleteLog(id);
-                    await this.loadData();
-                    this.render();
-                }
+        if (!this.options.readOnly) {
+            list.querySelectorAll('.delete-log-btn').forEach(btn => {
+                btn.addEventListener('click', async (e) => {
+                    const id = parseInt((e.target as HTMLElement).getAttribute('data-id')!);
+                    const confirm = await customConfirm("Delete Log", "Are you sure you want to permanently delete this log entry?");
+                    if (confirm) {
+                        await deleteLog(id);
+                        await this.loadData();
+                        this.render();
+                    }
+                });
             });
-        });
+        }
 
         list.querySelectorAll('.dashboard-media-link').forEach(link => {
             link.addEventListener('click', (e) => {
@@ -364,5 +392,15 @@ export class Dashboard extends Component<DashboardState> {
         }
 
         return ` ${pieces.join(' ')}`;
+    }
+
+    public destroy(): void {
+        this.activeChartsComponent?.destroy?.();
+        this.activeChartsComponent = null;
+    }
+
+    private static parseLocalDate(dateStr: string): Date {
+        const [year, month, day] = dateStr.split('-').map(Number);
+        return new Date(year, month - 1, day);
     }
 }

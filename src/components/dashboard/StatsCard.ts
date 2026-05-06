@@ -5,6 +5,7 @@ import { ActivitySummary, Media, formatDuration } from '../../api';
 interface StatsCardState {
     logs: ActivitySummary[];
     mediaList: Media[];
+    referenceDate?: string;
 }
 
 export class StatsCard extends Component<StatsCardState> {
@@ -62,7 +63,7 @@ export class StatsCard extends Component<StatsCardState> {
                 const pad = (n: number) => n.toString().padStart(2, '0');
                 return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
             };
-            const todayStr = getLocalISODate(new Date());
+            const todayStr = this.state.referenceDate || getLocalISODate(new Date());
             
             const lastLogD = new Date(uniqueDates[uniqueDates.length - 1]);
             const todayD = new Date(todayStr);

@@ -2,6 +2,7 @@ import { Dashboard } from './components/dashboard';
 import { MediaView } from './components/media_view';
 import { ProfileView } from './components/profile';
 import { StatisticsView } from './components/statistics';
+import { TimeTravelView } from './components/time_travel';
 import { 
     switchProfile, deleteProfile, listProfiles, 
     getUsername, getSetting 
@@ -29,7 +30,7 @@ function applyCachedTheme(profileName: string | null): void {
 
 applyCachedTheme(localStorage.getItem('kechimochi_profile'));
 
-type AppView = 'dashboard' | 'media' | 'statistics' | 'profile';
+type AppView = 'dashboard' | 'media' | 'statistics' | 'time-travel' | 'profile';
 
 class App {
     private currentView: AppView = 'dashboard';
@@ -38,6 +39,7 @@ class App {
     private dashboard: Dashboard;
     private mediaView: MediaView;
     private statisticsView: StatisticsView;
+    private timeTravelView: TimeTravelView;
     private profileView: ProfileView;
     
     private viewContainer: HTMLElement;
@@ -52,6 +54,7 @@ class App {
         this.dashboard = new Dashboard(this.viewContainer);
         this.mediaView = new MediaView(this.viewContainer);
         this.statisticsView = new StatisticsView(this.viewContainer);
+        this.timeTravelView = new TimeTravelView(this.viewContainer);
         this.profileView = new ProfileView(this.viewContainer);
 
         this.init();
@@ -239,6 +242,10 @@ class App {
         else if (this.currentView === 'statistics') {
             this.statisticsView.resetLoaded();
             this.statisticsView.render();
+        }
+        else if (this.currentView === 'time-travel') {
+            this.timeTravelView.resetLoaded();
+            this.timeTravelView.render();
         }
         else if (this.currentView === 'profile') this.profileView.render();
     }

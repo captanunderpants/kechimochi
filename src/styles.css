@@ -527,6 +527,50 @@ a {
   overflow-y: auto;
 }
 
+.time-travel-view {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.time-travel-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.time-travel-title {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.time-travel-subtitle {
+  margin: 0.25rem 0 0;
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+}
+
+.time-travel-form {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.time-travel-error {
+  width: 100%;
+  color: #ff8aa0;
+  font-size: 0.85rem;
+}
+
+.time-travel-snapshot-header {
+  margin-bottom: 1rem;
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
 /* Forms & Inputs */
 input, select {
   background-color: var(--bg-dark);

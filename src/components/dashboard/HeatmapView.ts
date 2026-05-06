@@ -6,6 +6,7 @@ interface HeatmapViewState {
     heatmapData: DailyHeatmap[];
     year: number;
     logs: ActivitySummary[];
+    referenceDate?: string;
 }
 
 export class HeatmapView extends Component<HeatmapViewState> {
@@ -168,7 +169,9 @@ export class HeatmapView extends Component<HeatmapViewState> {
     }
 
     private getQuickTotals(): { label: string; minutes: number; chars: number; avgMinutes?: number; avgChars?: number; }[] {
-        const today = new Date();
+        const today = this.state.referenceDate
+            ? this.parseLocalDate(this.state.referenceDate)
+            : new Date();
         const todayStr = this.getLocalISODate(today);
 
         const weekStart = new Date(today);
@@ -211,6 +214,11 @@ export class HeatmapView extends Component<HeatmapViewState> {
     private getLocalISODate(date: Date): string {
         const pad = (value: number) => value.toString().padStart(2, '0');
         return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+    }
+
+    private parseLocalDate(dateStr: string): Date {
+        const [year, month, day] = dateStr.split('-').map(Number);
+        return new Date(year, month - 1, day);
     }
 
     private static heatmapTooltip: HTMLElement | null = null;

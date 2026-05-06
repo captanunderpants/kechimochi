@@ -13,6 +13,7 @@ type CategoryTableRangeMode = 'daily' | 'weekly' | 'monthly' | 'all_time';
 
 interface ActivityChartsState {
     logs: ActivitySummary[];
+    referenceDate?: string;
     timeBucketMode: TimeBucketMode;
     timeRangeMode: TimeRangeMode;
     timeRangeOffset: number;
@@ -51,11 +52,20 @@ export class ActivityCharts extends Component<ActivityChartsState> {
         this.onChartParamChange = onChartParamChange;
     }
 
+    public destroy(): void {
+        this.pieChartInstance?.destroy();
+        this.charsChartInstance?.destroy();
+        this.barChartInstance?.destroy();
+        this.pieChartInstance = null;
+        this.charsChartInstance = null;
+        this.barChartInstance = null;
+    }
+
     render() {
         this.clear();
 
         const monthlyStats = this.getMonthlyStatsRows(this.state.monthlyStatsYear);
-        const currentYear = new Date().getFullYear();
+        const currentYear = this.getReferenceDate().getFullYear();
         const earliestLogYear = this.getEarliestLogYear();
         const canGoToPrevMonthlyYear = this.state.monthlyStatsYear > earliestLogYear;
         const canGoToNextMonthlyYear = this.state.monthlyStatsYear < currentYear;
@@ -250,7 +260,7 @@ export class ActivityCharts extends Component<ActivityChartsState> {
         });
 
         layout.querySelector('#btn-monthly-next')?.addEventListener('click', () => {
-            const currentYear = new Date().getFullYear();
+            const currentYear = this.getReferenceDate().getFullYear();
             if (this.state.monthlyStatsYear >= currentYear) return;
             this.onChartParamChange({ monthlyStatsYear: this.state.monthlyStatsYear + 1 });
         });
@@ -487,7 +497,7 @@ export class ActivityCharts extends Component<ActivityChartsState> {
     }
 
     private getEarliestLogYear(): number {
-        let earliestYear = new Date().getFullYear();
+        let earliestYear = this.getReferenceDate().getFullYear();
 
         for (const log of this.state.logs) {
             const year = parseInt(log.date.slice(0, 4), 10);
@@ -540,7 +550,7 @@ export class ActivityCharts extends Component<ActivityChartsState> {
 
     private getCategoryTableRangeContext(offset = this.state.categoryTableRangeOffset): CategoryTableRangeContext {
         const { categoryTableRangeMode } = this.state;
-        const today = new Date();
+        const today = this.getReferenceDate();
 
         if (categoryTableRangeMode === 'all_time') {
             return {
@@ -687,7 +697,7 @@ export class ActivityCharts extends Component<ActivityChartsState> {
         const { logs } = this.state;
         const timeRangeMode = this.getDefaultRangeForBucket(this.state.timeBucketMode, this.state.timeRangeMode);
         const timeBucketMode = this.getDefaultBucketForRange(timeRangeMode, this.state.timeBucketMode);
-        const today = new Date();
+        const today = this.getReferenceDate();
 
         if (timeRangeMode === 'all_time') {
             const years = new Set<number>();
@@ -857,6 +867,11 @@ export class ActivityCharts extends Component<ActivityChartsState> {
     private getLogsInRange(validStart: string, validEnd: string): ActivitySummary[] {
         if (!validStart) return this.state.logs;
         return this.state.logs.filter((log) => log.date >= validStart && log.date <= validEnd);
+    }
+
+    private getReferenceDate(): Date {
+        if (!this.state.referenceDate) return new Date();
+        return this.parseLocalDate(this.state.referenceDate);
     }
 
     private getThemeColors(): string[] {
@@ -1030,9 +1045,4 @@ export class ActivityCharts extends Component<ActivityChartsState> {
         return Math.min(max, Math.max(min, value));
     }
 
-    public destroy() {
-        if (this.pieChartInstance) this.pieChartInstance.destroy();
-        if (this.charsChartInstance) this.charsChartInstance.destroy();
-        if (this.barChartInstance) this.barChartInstance.destroy();
-    }
 }
