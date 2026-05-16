@@ -7,6 +7,7 @@ import { StatsCard } from './dashboard/StatsCard';
 import { HeatmapView } from './dashboard/HeatmapView';
 import { ActivityCharts } from './dashboard/ActivityCharts';
 import { buildDashboardSnapshot } from './dashboard/snapshot';
+import { getCurrentProfile } from '../storage';
 
 interface DashboardOptions {
     asOfDate?: string;
@@ -329,7 +330,7 @@ export class Dashboard extends Component<DashboardState> {
 
     private renderLogs(list: HTMLElement) {
         const logs = this.getSortedLogs();
-        const currentProfile = localStorage.getItem('kechimochi_profile') || 'default';
+        const currentProfile = getCurrentProfile() || 'default';
 
         if (logs.length === 0) {
             list.innerHTML = '<p style="color: var(--text-secondary);">No activity logged yet.</p>';

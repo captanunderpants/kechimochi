@@ -2,11 +2,11 @@ use rusqlite::{Connection, OptionalExtension};
 use serde::{Deserialize, Deserializer, Serialize};
 use std::fs::File;
 use std::path::Path;
-use tauri::Manager;
 
 use crate::db;
 use crate::models::{ActivityLog, Media};
-use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+use crate::storage;
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 
 fn deserialize_i64_strip_commas<'de, D>(deserializer: D) -> Result<i64, D::Error>
 where
@@ -44,11 +44,17 @@ where
                 let secs: f64 = parts[1].parse().map_err(serde::de::Error::custom)?;
                 Ok(mins + secs / 60.0)
             }
-            _ => Err(serde::de::Error::custom(format!("invalid duration format: {}", trimmed))),
+            _ => Err(serde::de::Error::custom(format!(
+                "invalid duration format: {}",
+                trimmed
+            ))),
         }
     } else {
         // Plain number (minutes, possibly fractional)
-        trimmed.replace(',', "").parse::<f64>().map_err(serde::de::Error::custom)
+        trimmed
+            .replace(',', "")
+            .parse::<f64>()
+            .map_err(serde::de::Error::custom)
     }
 }
 
@@ -60,7 +66,11 @@ struct CsvRow {
     log_name: String,
     #[serde(rename = "Media Type")]
     media_type: String,
-    #[serde(rename = "Characters Read", default, deserialize_with = "deserialize_i64_strip_commas")]
+    #[serde(
+        rename = "Characters Read",
+        default,
+        deserialize_with = "deserialize_i64_strip_commas"
+    )]
     characters_read: i64,
     #[serde(rename = "Duration", deserialize_with = "deserialize_duration")]
     duration: f64,
@@ -101,7 +111,9 @@ pub fn import_csv(conn: &mut Connection, file_path: &str) -> Result<usize, Strin
     }
 
     let file = File::open(path).map_err(|e| e.to_string())?;
-    let mut rdr = csv::ReaderBuilder::new().has_headers(true).from_reader(file);
+    let mut rdr = csv::ReaderBuilder::new()
+        .has_headers(true)
+        .from_reader(file);
 
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     let mut imported_count = 0;
@@ -122,7 +134,8 @@ pub fn import_csv(conn: &mut Connection, file_path: &str) -> Result<usize, Strin
             "JRPG" => "Playing",
             "Anime" | "Audiobook" | "Podcast" | "JDrama" | "Youtube" => "Listening",
             other => other, // fallback: use as-is
-        }.to_string();
+        }
+        .to_string();
 
         // Validate: Reading type requires Characters Read
         if media_type == "Reading" && record.characters_read <= 0 {
@@ -147,7 +160,11 @@ pub fn import_csv(conn: &mut Connection, file_path: &str) -> Result<usize, Strin
                     title: record.log_name.clone(),
                     media_type: media_type.clone(),
                     status: "Completed".into(),
-                    language: if record.language.is_empty() { "日本語".to_string() } else { record.language.clone() },
+                    language: if record.language.is_empty() {
+                        "日本語".to_string()
+                    } else {
+                        record.language.clone()
+                    },
                     description: "".to_string(),
                     cover_image: "".to_string(),
                     extra_data: "{}".to_string(),
@@ -159,7 +176,7 @@ pub fn import_csv(conn: &mut Connection, file_path: &str) -> Result<usize, Strin
                     total_characters_read: 0,
                     last_activity_date: String::new(),
                 };
-                
+
                 match db::add_media_with_id(&tx, &new_media) {
                     Ok(id) => id,
                     Err(e) => {
@@ -236,7 +253,9 @@ pub fn analyze_media_csv(conn: &Connection, file_path: &str) -> Result<Vec<Media
     }
 
     let file = File::open(path).map_err(|e| e.to_string())?;
-    let mut rdr = csv::ReaderBuilder::new().has_headers(true).from_reader(file);
+    let mut rdr = csv::ReaderBuilder::new()
+        .has_headers(true)
+        .from_reader(file);
     let mut conflicts = Vec::new();
 
     for result in rdr.deserialize() {
@@ -279,28 +298,37 @@ pub fn analyze_media_csv(conn: &Connection, file_path: &str) -> Result<Vec<Media
     Ok(conflicts)
 }
 
-pub fn apply_media_import(app_handle: &tauri::AppHandle, conn: &mut Connection, records: Vec<MediaCsvRow>) -> Result<usize, String> {
+pub fn apply_media_import(
+    app_handle: &tauri::AppHandle,
+    conn: &mut Connection,
+    records: Vec<MediaCsvRow>,
+) -> Result<usize, String> {
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     let mut imported = 0;
 
-    let app_dir = app_handle.path().app_data_dir().map_err(|e| e.to_string())?;
-    let covers_dir = app_dir.join("covers");
+    let storage_paths = storage::init(app_handle)?;
+    let covers_dir = storage_paths.covers_dir;
     std::fs::create_dir_all(&covers_dir).map_err(|e| e.to_string())?;
 
     for req in records {
         // Find existing to possibly delete old cover
-        let existing_id: Option<i64> = tx.query_row(
-            "SELECT id FROM shared.media WHERE title = ?1",
-            [&req.title],
-            |row| row.get(0)
-        ).ok();
+        let existing_id: Option<i64> = tx
+            .query_row(
+                "SELECT id FROM shared.media WHERE title = ?1",
+                [&req.title],
+                |row| row.get(0),
+            )
+            .ok();
 
         let mut final_cover_path = String::new();
 
         if !req.cover_image_b64.is_empty() {
             if let Ok(bytes) = BASE64.decode(&req.cover_image_b64) {
                 // Generate a generic name using the title hash or timestamp to avoid collisions
-                let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis();
+                let stamp = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_millis();
                 let dest_file = format!("import_{}.png", stamp);
                 let dest = covers_dir.join(&dest_file);
                 if std::fs::write(&dest, bytes).is_ok() {
@@ -311,12 +339,14 @@ pub fn apply_media_import(app_handle: &tauri::AppHandle, conn: &mut Connection, 
 
         if let Some(id) = existing_id {
             // Delete old cover
-            let old_cover: String = tx.query_row(
-                "SELECT cover_image FROM shared.media WHERE id = ?1",
-                [&id],
-                |row| row.get(0)
-            ).unwrap_or_default();
-            
+            let old_cover: String = tx
+                .query_row(
+                    "SELECT cover_image FROM shared.media WHERE id = ?1",
+                    [&id],
+                    |row| row.get(0),
+                )
+                .unwrap_or_default();
+
             if !old_cover.is_empty() {
                 let _ = std::fs::remove_file(&old_cover);
             }
@@ -379,7 +409,8 @@ mod tests {
     /// Create an in-memory SQLite connection with both main and shared schemas populated.
     fn setup_test_db() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
-        conn.execute("ATTACH DATABASE ':memory:' AS shared", []).unwrap();
+        conn.execute("ATTACH DATABASE ':memory:' AS shared", [])
+            .unwrap();
         db::create_tables(&conn).unwrap();
         conn
     }
@@ -403,7 +434,9 @@ mod tests {
             d: f64,
         }
         let csv = format!("Duration\n{}\n", s);
-        let mut rdr = csv::ReaderBuilder::new().has_headers(true).from_reader(csv.as_bytes());
+        let mut rdr = csv::ReaderBuilder::new()
+            .has_headers(true)
+            .from_reader(csv.as_bytes());
         rdr.deserialize::<W>().next().unwrap().unwrap().d
     }
 
@@ -458,7 +491,9 @@ mod tests {
             d: f64,
         }
         let csv = "Title,Duration\ntest,\n";
-        let mut rdr = csv::ReaderBuilder::new().has_headers(true).from_reader(csv.as_bytes());
+        let mut rdr = csv::ReaderBuilder::new()
+            .has_headers(true)
+            .from_reader(csv.as_bytes());
         let w: W = rdr.deserialize::<W>().next().unwrap().unwrap();
         assert_eq!(w.d, 0.0);
     }
@@ -470,12 +505,18 @@ mod tests {
         struct W {
             #[serde(rename = "Title")]
             _t: String,
-            #[serde(rename = "Characters Read", default, deserialize_with = "deserialize_i64_strip_commas")]
+            #[serde(
+                rename = "Characters Read",
+                default,
+                deserialize_with = "deserialize_i64_strip_commas"
+            )]
             c: i64,
         }
         // Use quoted value to safely pass commas through CSV
         let csv = format!("Title,Characters Read\ntest,\"{}\"\n", s);
-        let mut rdr = csv::ReaderBuilder::new().has_headers(true).from_reader(csv.as_bytes());
+        let mut rdr = csv::ReaderBuilder::new()
+            .has_headers(true)
+            .from_reader(csv.as_bytes());
         rdr.deserialize::<W>().next().unwrap().unwrap().c
     }
 
@@ -502,7 +543,7 @@ mod tests {
         let csv_path = write_csv(
             "Date,Log Name,Media Type,Duration,Language\n\
              2024-01-15,ある魔女が死ぬまで,Anime,45,Japanese\n\
-             2024-01-16,呪術廻戦,Anime,25,Japanese\n"
+             2024-01-16,呪術廻戦,Anime,25,Japanese\n",
         );
 
         let count = import_csv(&mut conn, &csv_path).unwrap();
@@ -523,7 +564,7 @@ mod tests {
         let csv_path = write_csv(
             "Date,Log Name,Media Type,Duration,Language\n\
              2024-01-15,FF7,JRPG,60,Japanese\n\
-             2024-01-16,FF7,JRPG,120,Japanese\n"
+             2024-01-16,FF7,JRPG,120,Japanese\n",
         );
 
         let count = import_csv(&mut conn, &csv_path).unwrap();
@@ -544,7 +585,7 @@ mod tests {
         let mut conn = setup_test_db();
         let csv_path = write_csv(
             "Date,Log Name,Media Type,Duration,Language\n\
-             2024/03/01,本好きの下剋上,Anime,30,Japanese\n"
+             2024/03/01,本好きの下剋上,Anime,30,Japanese\n",
         );
 
         let count = import_csv(&mut conn, &csv_path).unwrap();
@@ -562,13 +603,16 @@ mod tests {
         // 1:30:45 should be stored as 90.75 minutes (1*60 + 30 + 45/60)
         let csv_path = write_csv(
             "Date,Log Name,Media Type,Duration,Language\n\
-             2024-04-01,アニメ,Anime,1:30:45,Japanese\n"
+             2024-04-01,アニメ,Anime,1:30:45,Japanese\n",
         );
 
         import_csv(&mut conn, &csv_path).unwrap();
         let logs = db::get_logs(&conn).unwrap();
-        assert!((logs[0].duration_minutes - 90.75).abs() < 1e-6,
-            "Expected 90.75, got {}", logs[0].duration_minutes);
+        assert!(
+            (logs[0].duration_minutes - 90.75).abs() < 1e-6,
+            "Expected 90.75, got {}",
+            logs[0].duration_minutes
+        );
 
         std::fs::remove_file(csv_path).ok();
     }
@@ -586,11 +630,14 @@ mod tests {
         // Manga (Reading type) without Characters Read should fail
         let csv_path = write_csv(
             "Date,Log Name,Media Type,Duration,Characters Read,Language\n\
-             2024-04-01,テストマンガ,Manga,60,0,Japanese\n"
+             2024-04-01,テストマンガ,Manga,60,0,Japanese\n",
         );
 
         let result = import_csv(&mut conn, &csv_path);
-        assert!(result.is_err(), "Expected error for Reading type without characters");
+        assert!(
+            result.is_err(),
+            "Expected error for Reading type without characters"
+        );
 
         std::fs::remove_file(csv_path).ok();
     }
@@ -600,7 +647,7 @@ mod tests {
         let mut conn = setup_test_db();
         let csv_path = write_csv(
             "Date,Log Name,Media Type,Duration,Characters Read,Language\n\
-             2024-04-01,テストマンガ,Manga,60,5000,Japanese\n"
+             2024-04-01,テストマンガ,Manga,60,5000,Japanese\n",
         );
 
         let count = import_csv(&mut conn, &csv_path).unwrap();
@@ -616,7 +663,7 @@ mod tests {
         let mut conn = setup_test_db();
         let csv_path = write_csv(
             "Date,Log Name,Media Type,Duration,Characters Read,Language\n\
-             2024-04-01,テスト,Manga,60,\"1,234\",Japanese\n"
+             2024-04-01,テスト,Manga,60,\"1,234\",Japanese\n",
         );
 
         let count = import_csv(&mut conn, &csv_path).unwrap();
@@ -632,7 +679,7 @@ mod tests {
         let mut conn = setup_test_db();
         let csv_path = write_csv(
             "Date,Log Name,Media Type,Duration,Language\n\
-             2024-04-01,テスト,Anime,30,\n"
+             2024-04-01,テスト,Anime,30,\n",
         );
 
         import_csv(&mut conn, &csv_path).unwrap();
@@ -649,14 +696,15 @@ mod tests {
             "Date,Log Name,Media Type,Duration,Characters Read,Language\n\
              2024-04-01,アニメ,Anime,30,0,Japanese\n\
              2024-04-02,マンガ,Manga,30,500,Japanese\n\
-             2024-04-03,ゲーム,JRPG,60,0,Japanese\n"
+             2024-04-03,ゲーム,JRPG,60,0,Japanese\n",
         );
 
         import_csv(&mut conn, &csv_path).unwrap();
         let media = db::get_all_media(&conn).unwrap();
 
         // Sort for deterministic order
-        let by_title: std::collections::HashMap<String, String> = media.iter()
+        let by_title: std::collections::HashMap<String, String> = media
+            .iter()
             .map(|m| (m.title.clone(), m.media_type.clone()))
             .collect();
 

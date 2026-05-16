@@ -1,6 +1,7 @@
+mod csv_import;
 mod db;
 mod models;
-mod csv_import;
+mod storage;
 
 use rusqlite::Connection;
 use std::sync::Mutex;
@@ -50,7 +51,13 @@ fn delete_log(state: State<DbState>, id: i64) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn update_log(state: State<DbState>, id: i64, duration_minutes: f64, characters_read: i64, date: String) -> Result<(), String> {
+fn update_log(
+    state: State<DbState>,
+    id: i64,
+    duration_minutes: f64,
+    characters_read: i64,
+    date: String,
+) -> Result<(), String> {
     let conn = state.conn.lock().unwrap();
     db::update_log(&conn, id, duration_minutes, characters_read, &date).map_err(|e| e.to_string())
 }
@@ -74,48 +81,55 @@ fn get_heatmap(state: State<DbState>) -> Result<Vec<DailyHeatmap>, String> {
 }
 
 #[tauri::command]
-fn get_logs_for_media(state: State<DbState>, media_id: i64) -> Result<Vec<ActivitySummary>, String> {
+fn get_logs_for_media(
+    state: State<DbState>,
+    media_id: i64,
+) -> Result<Vec<ActivitySummary>, String> {
     let conn = state.conn.lock().unwrap();
     db::get_logs_for_media(&conn, media_id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn upload_cover_image(app_handle: tauri::AppHandle, state: State<DbState>, media_id: i64, path: String) -> Result<String, String> {
-    let app_dir = app_handle
-        .path()
-        .app_data_dir()
-        .map_err(|e| e.to_string())?;
-        
-    let img_dir = app_dir.join("covers");
+fn upload_cover_image(
+    app_handle: tauri::AppHandle,
+    state: State<DbState>,
+    media_id: i64,
+    path: String,
+) -> Result<String, String> {
+    let storage_paths = storage::init(&app_handle)?;
+    let img_dir = storage_paths.covers_dir;
     std::fs::create_dir_all(&img_dir).map_err(|e| e.to_string())?;
 
     let src = std::path::Path::new(&path);
     let ext = src.extension().and_then(|e| e.to_str()).unwrap_or("png");
     let dest_file = format!("{}.{}", media_id, ext);
     let dest = img_dir.join(&dest_file);
-    
+
     let conn = state.conn.lock().unwrap();
-    let old_cover: String = conn.query_row(
-        "SELECT cover_image FROM shared.media WHERE id = ?1",
-        rusqlite::params![media_id],
-        |row| row.get(0),
-    ).unwrap_or_default();
-    
+    let old_cover: String = conn
+        .query_row(
+            "SELECT cover_image FROM shared.media WHERE id = ?1",
+            rusqlite::params![media_id],
+            |row| row.get(0),
+        )
+        .unwrap_or_default();
+
     if !old_cover.is_empty() {
         let old_path = std::path::Path::new(&old_cover);
         if old_path.exists() {
             let _ = std::fs::remove_file(old_path);
         }
     }
-    
+
     std::fs::copy(src, &dest).map_err(|e| e.to_string())?;
-    
+
     let dest_str = dest.to_string_lossy().to_string();
-    
+
     conn.execute(
         "UPDATE shared.media SET cover_image = ?1 WHERE id = ?2",
         rusqlite::params![dest_str, media_id],
-    ).map_err(|e| e.to_string())?;
+    )
+    .map_err(|e| e.to_string())?;
 
     Ok(dest_str)
 }
@@ -131,7 +145,7 @@ async fn fetch_remote_bytes(url: String) -> Result<Vec<u8>, String> {
         .user_agent("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
         .build()
         .map_err(|e| e.to_string())?;
-    
+
     let res = client.get(&url).send().await.map_err(|e| e.to_string())?;
     let res = res.error_for_status().map_err(|e| e.to_string())?;
     let bytes = res.bytes().await.map_err(|e| e.to_string())?;
@@ -139,35 +153,44 @@ async fn fetch_remote_bytes(url: String) -> Result<Vec<u8>, String> {
 }
 
 #[tauri::command]
-async fn fetch_external_json(url: String, method: String, body: Option<String>, headers: Option<std::collections::HashMap<String, String>>) -> Result<String, String> {
+async fn fetch_external_json(
+    url: String,
+    method: String,
+    body: Option<String>,
+    headers: Option<std::collections::HashMap<String, String>>,
+) -> Result<String, String> {
     let builder = reqwest::Client::builder();
-    
+
     // Set a default user agent, then try to override below if provided
     let default_ua = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
     let ua = if let Some(ref h) = headers {
-        h.get("User-Agent").map(|s| s.as_str()).unwrap_or(default_ua)
+        h.get("User-Agent")
+            .map(|s| s.as_str())
+            .unwrap_or(default_ua)
     } else {
         default_ua
     };
-    
+
     let client = builder.user_agent(ua).build().map_err(|e| e.to_string())?;
-    
+
     let mut req = match method.to_uppercase().as_str() {
         "POST" => client.post(&url),
         _ => client.get(&url),
     };
-    
+
     if let Some(h) = headers {
         for (k, v) in h.iter() {
-            if k.eq_ignore_ascii_case("User-Agent") { continue; }
+            if k.eq_ignore_ascii_case("User-Agent") {
+                continue;
+            }
             req = req.header(k, v);
         }
     }
-    
+
     if let Some(b) = body {
         req = req.header("Content-Type", "application/json").body(b);
     }
-    
+
     let res = req.send().await.map_err(|e| e.to_string())?;
     let res = res.error_for_status().map_err(|e| e.to_string())?;
     let text = res.text().await.map_err(|e| e.to_string())?;
@@ -175,52 +198,59 @@ async fn fetch_external_json(url: String, method: String, body: Option<String>, 
 }
 
 #[tauri::command]
-async fn download_and_save_image(app_handle: tauri::AppHandle, state: State<'_, DbState>, media_id: i64, url: String) -> Result<String, String> {
+async fn download_and_save_image(
+    app_handle: tauri::AppHandle,
+    state: State<'_, DbState>,
+    media_id: i64,
+    url: String,
+) -> Result<String, String> {
     let client = reqwest::Client::builder()
         .user_agent("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
         .build()
         .map_err(|e| e.to_string())?;
-    
+
     let res = client.get(&url).send().await.map_err(|e| e.to_string())?;
     let res = res.error_for_status().map_err(|e| e.to_string())?;
     let bytes = res.bytes().await.map_err(|e| e.to_string())?;
-    
-    let app_dir = app_handle
-        .path()
-        .app_data_dir()
-        .map_err(|e| e.to_string())?;
-        
-    let img_dir = app_dir.join("covers");
+
+    let storage_paths = storage::init(&app_handle)?;
+    let img_dir = storage_paths.covers_dir;
     std::fs::create_dir_all(&img_dir).map_err(|e| e.to_string())?;
 
-    let ext = std::path::Path::new(&url).extension().and_then(|e| e.to_str()).unwrap_or("jpg");
+    let ext = std::path::Path::new(&url)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("jpg");
     let ext = ext.split('?').next().unwrap_or("jpg");
-    
+
     let dest_file = format!("{}_remote.{}", media_id, ext);
     let dest = img_dir.join(&dest_file);
-    
+
     std::fs::write(&dest, bytes).map_err(|e| e.to_string())?;
-    
+
     let dest_str = dest.to_string_lossy().to_string();
-    
+
     let conn = state.conn.lock().unwrap();
-    let old_cover: String = conn.query_row(
-        "SELECT cover_image FROM shared.media WHERE id = ?1",
-        rusqlite::params![media_id],
-        |row| row.get(0),
-    ).unwrap_or_default();
-    
+    let old_cover: String = conn
+        .query_row(
+            "SELECT cover_image FROM shared.media WHERE id = ?1",
+            rusqlite::params![media_id],
+            |row| row.get(0),
+        )
+        .unwrap_or_default();
+
     if !old_cover.is_empty() {
         let old_path = std::path::Path::new(&old_cover);
         if old_path.exists() && old_cover != dest_str {
             let _ = std::fs::remove_file(old_path);
         }
     }
-    
+
     conn.execute(
         "UPDATE shared.media SET cover_image = ?1 WHERE id = ?2",
         rusqlite::params![dest_str, media_id],
-    ).map_err(|e| e.to_string())?;
+    )
+    .map_err(|e| e.to_string())?;
 
     Ok(dest_str)
 }
@@ -232,34 +262,51 @@ fn import_csv(state: State<DbState>, file_path: String) -> Result<usize, String>
 }
 
 #[tauri::command]
-fn export_csv(state: State<DbState>, file_path: String, start_date: Option<String>, end_date: Option<String>) -> Result<usize, String> {
+fn export_csv(
+    state: State<DbState>,
+    file_path: String,
+    start_date: Option<String>,
+    end_date: Option<String>,
+) -> Result<usize, String> {
     let conn = state.conn.lock().unwrap();
     let logs = db::get_logs(&conn).map_err(|e| e.to_string())?;
-    
+
     let mut count = 0;
     let mut wtr = csv::Writer::from_path(file_path).map_err(|e| e.to_string())?;
-    
-    wtr.write_record(&["Date", "Log Name", "Media Type", "Characters Read", "Duration"]).map_err(|e| e.to_string())?;
-    
+
+    wtr.write_record(&[
+        "Date",
+        "Log Name",
+        "Media Type",
+        "Characters Read",
+        "Duration",
+    ])
+    .map_err(|e| e.to_string())?;
+
     for log in logs {
         if let Some(start) = &start_date {
-            if &log.date < start { continue; }
+            if &log.date < start {
+                continue;
+            }
         }
         if let Some(end) = &end_date {
-            if &log.date > end { continue; }
+            if &log.date > end {
+                continue;
+            }
         }
-        
+
         wtr.write_record(&[
             &log.date,
             &log.title,
             &log.content_type,
             &log.characters_read.to_string(),
             &log.duration_minutes.to_string(),
-        ]).map_err(|e| e.to_string())?;
-        
+        ])
+        .map_err(|e| e.to_string())?;
+
         count += 1;
     }
-    
+
     wtr.flush().map_err(|e| e.to_string())?;
     Ok(count)
 }
@@ -271,19 +318,30 @@ fn export_media_csv(state: State<DbState>, file_path: String) -> Result<usize, S
 }
 
 #[tauri::command]
-fn analyze_media_csv(state: State<DbState>, file_path: String) -> Result<Vec<csv_import::MediaConflict>, String> {
+fn analyze_media_csv(
+    state: State<DbState>,
+    file_path: String,
+) -> Result<Vec<csv_import::MediaConflict>, String> {
     let conn = state.conn.lock().unwrap();
     csv_import::analyze_media_csv(&conn, &file_path)
 }
 
 #[tauri::command]
-fn apply_media_import(app_handle: tauri::AppHandle, state: State<DbState>, records: Vec<csv_import::MediaCsvRow>) -> Result<usize, String> {
+fn apply_media_import(
+    app_handle: tauri::AppHandle,
+    state: State<DbState>,
+    records: Vec<csv_import::MediaCsvRow>,
+) -> Result<usize, String> {
     let mut conn = state.conn.lock().unwrap();
     csv_import::apply_media_import(&app_handle, &mut conn, records)
 }
 
 #[tauri::command]
-fn switch_profile(app_handle: tauri::AppHandle, state: State<DbState>, profile_name: String) -> Result<(), String> {
+fn switch_profile(
+    app_handle: tauri::AppHandle,
+    state: State<DbState>,
+    profile_name: String,
+) -> Result<(), String> {
     let new_conn = db::init_db(&app_handle, &profile_name).map_err(|e| e.to_string())?;
     let mut conn_guard = state.conn.lock().unwrap();
     *conn_guard = new_conn;
@@ -302,17 +360,17 @@ fn wipe_everything(app_handle: tauri::AppHandle, state: State<DbState>) -> Resul
         let mut conn_guard = state.conn.lock().unwrap();
         *conn_guard = rusqlite::Connection::open_in_memory().unwrap();
     }
-    
-    let app_dir = app_handle.path().app_data_dir().map_err(|e| e.to_string())?;
-    
+
+    let storage_paths = storage::init(&app_handle)?;
+
     // Delete covers dir
-    let covers_dir = app_dir.join("covers");
+    let covers_dir = storage_paths.covers_dir;
     if covers_dir.exists() {
         let _ = std::fs::remove_dir_all(&covers_dir);
     }
-    
+
     // Delete all DBs
-    if let Ok(entries) = std::fs::read_dir(&app_dir) {
+    if let Ok(entries) = std::fs::read_dir(&storage_paths.root_dir) {
         for entry in entries.filter_map(std::result::Result::ok) {
             let path = entry.path();
             if let Some(ext) = path.extension() {
@@ -322,12 +380,16 @@ fn wipe_everything(app_handle: tauri::AppHandle, state: State<DbState>) -> Resul
             }
         }
     }
-    
+
     Ok(())
 }
 
 #[tauri::command]
-fn delete_profile(app_handle: tauri::AppHandle, state: State<DbState>, profile_name: String) -> Result<(), String> {
+fn delete_profile(
+    app_handle: tauri::AppHandle,
+    state: State<DbState>,
+    profile_name: String,
+) -> Result<(), String> {
     {
         let mut conn_guard = state.conn.lock().unwrap();
         *conn_guard = rusqlite::Connection::open_in_memory().unwrap();
@@ -368,7 +430,7 @@ pub fn run() {
         .setup(|app| {
             let profiles = db::list_profiles(app.handle()).unwrap_or_default();
             let conn = if profiles.is_empty() {
-                // If no profile exists, start with a temporary in-memory db. 
+                // If no profile exists, start with a temporary in-memory db.
                 // The frontend will force the user to create an initial profile and call switchProfile.
                 rusqlite::Connection::open_in_memory().unwrap()
             } else {

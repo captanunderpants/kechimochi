@@ -11,14 +11,15 @@ import {
     customPrompt, customConfirm, customAlert, 
     initialProfilePrompt, showLogActivityModal 
 } from './modals';
+import {
+    getCurrentProfile,
+    getThemeCacheKey,
+    migrateBrowserStorage,
+    setCurrentProfile
+} from './storage';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 
 const appWindow = getCurrentWindow();
-const THEME_CACHE_PREFIX = 'kechimochi_theme_';
-
-function getThemeCacheKey(profileName: string): string {
-    return `${THEME_CACHE_PREFIX}${profileName}`;
-}
 
 function applyCachedTheme(profileName: string | null): void {
     if (!profileName) return;
@@ -28,13 +29,14 @@ function applyCachedTheme(profileName: string | null): void {
     }
 }
 
-applyCachedTheme(localStorage.getItem('kechimochi_profile'));
+migrateBrowserStorage();
+applyCachedTheme(getCurrentProfile());
 
 type AppView = 'dashboard' | 'media' | 'statistics' | 'time-travel' | 'profile';
 
 class App {
     private currentView: AppView = 'dashboard';
-    private currentProfile: string = localStorage.getItem('kechimochi_profile') || '';
+    private currentProfile: string = getCurrentProfile();
     
     private dashboard: Dashboard;
     private mediaView: MediaView;
@@ -97,7 +99,7 @@ class App {
     private setupProfileControls() {
         this.selectProfileEl.addEventListener('change', async () => {
             this.currentProfile = this.selectProfileEl.value;
-            localStorage.setItem('kechimochi_profile', this.currentProfile);
+            setCurrentProfile(this.currentProfile);
             applyCachedTheme(this.currentProfile);
             await switchProfile(this.currentProfile);
             await this.loadTheme();
@@ -108,7 +110,7 @@ class App {
             const newProfile = await customPrompt("Enter new user profile name:");
             if (newProfile && newProfile.trim() !== '') {
                 this.currentProfile = newProfile.trim();
-                localStorage.setItem('kechimochi_profile', this.currentProfile);
+                setCurrentProfile(this.currentProfile);
                 applyCachedTheme(this.currentProfile);
                 await switchProfile(this.currentProfile);
                 await this.loadTheme();
@@ -128,7 +130,7 @@ class App {
                 await deleteProfile(this.currentProfile);
                 const updatedProfiles = await listProfiles();
                 this.currentProfile = updatedProfiles.length > 0 ? updatedProfiles[0] : 'default';
-                localStorage.setItem('kechimochi_profile', this.currentProfile);
+                setCurrentProfile(this.currentProfile);
                 applyCachedTheme(this.currentProfile);
                 await switchProfile(this.currentProfile);
                 await this.loadTheme();
@@ -199,12 +201,12 @@ class App {
             const osUsername = await getUsername();
             const initialName = await initialProfilePrompt(osUsername);
             this.currentProfile = initialName;
-            localStorage.setItem('kechimochi_profile', this.currentProfile);
+            setCurrentProfile(this.currentProfile);
             await switchProfile(this.currentProfile);
             profiles = await listProfiles();
         } else if (!profiles.includes(this.currentProfile)) {
             this.currentProfile = profiles[0];
-            localStorage.setItem('kechimochi_profile', this.currentProfile);
+            setCurrentProfile(this.currentProfile);
         }
         
         this.selectProfileEl.innerHTML = profiles.map(p => `<option value="${p}">${p}</option>`).join('');

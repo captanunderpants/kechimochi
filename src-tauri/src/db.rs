@@ -1,8 +1,9 @@
 use rusqlite::{params, Connection, Result};
-use std::fs;
-use tauri::Manager;
+use std::collections::HashSet;
+use std::{fs, path::Path};
 
-use crate::models::{ActivityLog, ActivitySummary, Media, DailyHeatmap};
+use crate::models::{ActivityLog, ActivitySummary, DailyHeatmap, Media};
+use crate::storage;
 
 fn migrate_to_shared(conn: &Connection) -> Result<()> {
     // Check if `main.media` exists
@@ -13,15 +14,9 @@ fn migrate_to_shared(conn: &Connection) -> Result<()> {
     )?;
 
     if count > 0 {
-        // Create shared.media table if it doesn't exist
         create_shared_media_table(conn)?;
-        
-        // Copy old media over.
-        let _ = conn.execute(
-            "INSERT OR IGNORE INTO shared.media (id, title, media_type, status, language, description, cover_image, extra_data, content_type, tracking_status)
-             SELECT id, title, media_type, status, language, description, cover_image, extra_data, content_type, 'Untracked' FROM main.media",
-            [],
-        );
+
+        copy_main_media_to_shared(conn)?;
 
         // Before dropping main.media, recreate activity_logs without the FOREIGN KEY
         let count_logs: i64 = conn.query_row(
@@ -29,18 +24,123 @@ fn migrate_to_shared(conn: &Connection) -> Result<()> {
             [],
             |row| row.get(0),
         )?;
-        
+
         if count_logs > 0 {
-           conn.execute("ALTER TABLE main.activity_logs RENAME TO activity_logs_old", [])?;
-           create_activity_logs_table(conn)?;
-           conn.execute("INSERT INTO main.activity_logs (id, media_id, duration_minutes, date) SELECT id, media_id, duration_minutes, date FROM main.activity_logs_old", [])?;
-           conn.execute("DROP TABLE main.activity_logs_old", [])?;
+            rebuild_activity_logs_without_fk(conn)?;
         }
 
-        // Now drop main.media
         conn.execute("DROP TABLE main.media", [])?;
     }
     Ok(())
+}
+
+fn copy_main_media_to_shared(conn: &Connection) -> Result<()> {
+    let columns = table_columns(conn, "main", "media")?;
+    let mut insert_columns = vec![
+        "title",
+        "media_type",
+        "status",
+        "language",
+        "description",
+        "cover_image",
+        "extra_data",
+        "content_type",
+        "tracking_status",
+        "nsfw",
+        "hidden",
+    ];
+    let mut select_columns = vec![
+        column_or_default(&columns, "title", "'Untitled'"),
+        column_or_default(&columns, "media_type", "'Reading'"),
+        column_or_default(&columns, "status", "'Active'"),
+        column_or_default(&columns, "language", "'日本語'"),
+        column_or_default(&columns, "description", "''"),
+        column_or_default(&columns, "cover_image", "''"),
+        column_or_default(&columns, "extra_data", "'{}'"),
+        column_or_default(&columns, "content_type", "'Unknown'"),
+        column_or_default(&columns, "tracking_status", "'Untracked'"),
+        column_or_default(&columns, "nsfw", "0"),
+        column_or_default(&columns, "hidden", "0"),
+    ];
+
+    if columns.contains("id") {
+        insert_columns.insert(0, "id");
+        select_columns.insert(0, quote_ident("id"));
+    }
+
+    let sql = format!(
+        "INSERT OR IGNORE INTO shared.media ({}) SELECT {} FROM main.media",
+        insert_columns.join(", "),
+        select_columns.join(", ")
+    );
+    conn.execute(&sql, [])?;
+    Ok(())
+}
+
+fn rebuild_activity_logs_without_fk(conn: &Connection) -> Result<()> {
+    let columns = table_columns(conn, "main", "activity_logs")?;
+    conn.execute(
+        "ALTER TABLE main.activity_logs RENAME TO activity_logs_old",
+        [],
+    )?;
+    create_activity_logs_table(conn)?;
+
+    let mut insert_columns = vec!["media_id", "duration_minutes", "characters_read", "date"];
+    let mut select_columns = vec![
+        column_or_default(&columns, "media_id", "0"),
+        column_or_default(&columns, "duration_minutes", "0"),
+        column_or_default(&columns, "characters_read", "0"),
+        column_or_default(&columns, "date", "date('now')"),
+    ];
+
+    if columns.contains("id") {
+        insert_columns.insert(0, "id");
+        select_columns.insert(0, quote_ident("id"));
+    }
+
+    let sql = format!(
+        "INSERT INTO main.activity_logs ({}) SELECT {} FROM main.activity_logs_old",
+        insert_columns.join(", "),
+        select_columns.join(", ")
+    );
+    let result = conn.execute(&sql, []);
+
+    if result.is_err() {
+        let _ = conn.execute("DROP TABLE main.activity_logs", []);
+        let _ = conn.execute(
+            "ALTER TABLE main.activity_logs_old RENAME TO activity_logs",
+            [],
+        );
+        result?;
+    }
+
+    conn.execute("DROP TABLE main.activity_logs_old", [])?;
+    Ok(())
+}
+
+fn table_columns(conn: &Connection, schema: &str, table: &str) -> Result<HashSet<String>> {
+    let sql = format!("PRAGMA {}.table_info({})", schema, quote_ident(table));
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+    let mut columns = HashSet::new();
+
+    for row in rows {
+        columns.insert(row?);
+    }
+
+    Ok(columns)
+}
+
+fn column_or_default(columns: &HashSet<String>, column: &str, default: &str) -> String {
+    if columns.contains(column) {
+        format!("COALESCE({}, {})", quote_ident(column), default)
+    } else {
+        default.to_string()
+    }
+}
+
+fn quote_ident(ident: &str) -> String {
+    format!("\"{}\"", ident.replace('"', "\"\""))
 }
 
 fn create_shared_media_table(conn: &Connection) -> Result<()> {
@@ -59,16 +159,37 @@ fn create_shared_media_table(conn: &Connection) -> Result<()> {
         )",
         [],
     )?;
-    
+
     // Try to add the columns to existing tables (fails gracefully if they already exist)
-    let _ = conn.execute("ALTER TABLE shared.media ADD COLUMN description TEXT DEFAULT ''", []);
-    let _ = conn.execute("ALTER TABLE shared.media ADD COLUMN cover_image TEXT DEFAULT ''", []);
-    let _ = conn.execute("ALTER TABLE shared.media ADD COLUMN extra_data TEXT DEFAULT '{}'", []);
-    let _ = conn.execute("ALTER TABLE shared.media ADD COLUMN content_type TEXT DEFAULT 'Unknown'", []);
-    let _ = conn.execute("ALTER TABLE shared.media ADD COLUMN tracking_status TEXT DEFAULT 'Untracked'", []);
-    let _ = conn.execute("ALTER TABLE shared.media ADD COLUMN nsfw INTEGER DEFAULT 0", []);
-    let _ = conn.execute("ALTER TABLE shared.media ADD COLUMN hidden INTEGER DEFAULT 0", []);
-    
+    let _ = conn.execute(
+        "ALTER TABLE shared.media ADD COLUMN description TEXT DEFAULT ''",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE shared.media ADD COLUMN cover_image TEXT DEFAULT ''",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE shared.media ADD COLUMN extra_data TEXT DEFAULT '{}'",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE shared.media ADD COLUMN content_type TEXT DEFAULT 'Unknown'",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE shared.media ADD COLUMN tracking_status TEXT DEFAULT 'Untracked'",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE shared.media ADD COLUMN nsfw INTEGER DEFAULT 0",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE shared.media ADD COLUMN hidden INTEGER DEFAULT 0",
+        [],
+    );
+
     Ok(())
 }
 
@@ -83,7 +204,10 @@ fn create_activity_logs_table(conn: &Connection) -> Result<()> {
         )",
         [],
     )?;
-    let _ = conn.execute("ALTER TABLE main.activity_logs ADD COLUMN characters_read INTEGER DEFAULT 0", []);
+    let _ = conn.execute(
+        "ALTER TABLE main.activity_logs ADD COLUMN characters_read INTEGER DEFAULT 0",
+        [],
+    );
     Ok(())
 }
 
@@ -160,42 +284,97 @@ pub fn create_tables(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+fn migrate_cover_paths(
+    conn: &Connection,
+    legacy_cover_dirs: &[std::path::PathBuf],
+    covers_dir: &Path,
+) -> Result<()> {
+    if legacy_cover_dirs.is_empty() {
+        return Ok(());
+    }
+
+    let mut stmt = conn.prepare(
+        "SELECT id, cover_image FROM shared.media WHERE cover_image IS NOT NULL AND cover_image != ''",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+    })?;
+
+    let mut updates = Vec::new();
+    for row in rows {
+        let (id, cover_image) = row?;
+        let cover_path = Path::new(&cover_image);
+
+        for legacy_dir in legacy_cover_dirs {
+            if let Ok(relative) = cover_path.strip_prefix(legacy_dir) {
+                let migrated_path = covers_dir.join(relative);
+                updates.push((id, migrated_path.to_string_lossy().to_string()));
+                break;
+            }
+        }
+    }
+    drop(stmt);
+
+    for (id, migrated_path) in updates {
+        conn.execute(
+            "UPDATE shared.media SET cover_image = ?1 WHERE id = ?2",
+            params![migrated_path, id],
+        )?;
+    }
+
+    Ok(())
+}
+
 fn migrate_content_types(conn: &Connection) -> Result<()> {
     // Migrate old content type names to new ones
-    let _ = conn.execute("UPDATE shared.media SET content_type = 'Youtube' WHERE content_type = 'Youtube Video'", []);
-    let _ = conn.execute("UPDATE shared.media SET content_type = 'JDrama' WHERE content_type = 'Drama'", []);
-    let _ = conn.execute("UPDATE shared.media SET content_type = 'Light Novel' WHERE content_type = 'Novel'", []);
-    let _ = conn.execute("UPDATE shared.media SET content_type = 'JRPG' WHERE content_type = 'Videogame'", []);
+    let _ = conn.execute(
+        "UPDATE shared.media SET content_type = 'Youtube' WHERE content_type = 'Youtube Video'",
+        [],
+    );
+    let _ = conn.execute(
+        "UPDATE shared.media SET content_type = 'JDrama' WHERE content_type = 'Drama'",
+        [],
+    );
+    let _ = conn.execute(
+        "UPDATE shared.media SET content_type = 'Light Novel' WHERE content_type = 'Novel'",
+        [],
+    );
+    let _ = conn.execute(
+        "UPDATE shared.media SET content_type = 'JRPG' WHERE content_type = 'Videogame'",
+        [],
+    );
     // Derive media_type from content_type
     let _ = conn.execute("UPDATE shared.media SET media_type = 'Reading' WHERE content_type IN ('Manga', 'Light Novel', 'Visual Novel', 'Book', 'Webnovel')", []);
     let _ = conn.execute("UPDATE shared.media SET media_type = 'Listening' WHERE content_type IN ('Anime', 'Audiobook', 'Podcast', 'JDrama', 'Youtube')", []);
-    let _ = conn.execute("UPDATE shared.media SET media_type = 'Playing' WHERE content_type IN ('JRPG')", []);
+    let _ = conn.execute(
+        "UPDATE shared.media SET media_type = 'Playing' WHERE content_type IN ('JRPG')",
+        [],
+    );
     // Migrate Watching/None to Listening
-    let _ = conn.execute("UPDATE shared.media SET media_type = 'Listening' WHERE media_type IN ('Watching', 'None')", []);
+    let _ = conn.execute(
+        "UPDATE shared.media SET media_type = 'Listening' WHERE media_type IN ('Watching', 'None')",
+        [],
+    );
     Ok(())
 }
 
 pub fn init_db(app_handle: &tauri::AppHandle, profile_name: &str) -> Result<Connection> {
-    let app_dir = app_handle
-        .path()
-        .app_data_dir()
-        .expect("Failed to get app data dir");
-    fs::create_dir_all(&app_dir).expect("Failed to create app data dir");
-    
-    let shared_db_path = app_dir.join("kechimochi_shared_media.db");
-    let file_name = format!("kechimochi_{}.db", profile_name);
-    let db_path = app_dir.join(file_name);
+    let storage_paths = storage::init(app_handle).expect("Failed to initialize app storage");
+    let shared_db_path = storage_paths.shared_db_path();
+    let db_path = storage_paths.profile_db_path(profile_name);
 
     let conn = Connection::open(db_path)?;
 
     // Performance tuning: WAL mode, larger cache, memory temp store
-    conn.execute_batch("
+    conn.execute_batch(
+        "
         PRAGMA journal_mode=WAL;
         PRAGMA synchronous=NORMAL;
         PRAGMA cache_size=-16000;
         PRAGMA temp_store=MEMORY;
         PRAGMA mmap_size=134217728;
-    ")?;
+    ",
+    )?;
 
     // Attach shared database
     conn.execute(
@@ -208,42 +387,41 @@ pub fn init_db(app_handle: &tauri::AppHandle, profile_name: &str) -> Result<Conn
 
     // Ensure tables exist
     create_tables(&conn)?;
+    migrate_cover_paths(
+        &conn,
+        &storage::legacy_cover_dirs(&storage_paths),
+        &storage_paths.covers_dir,
+    )?;
 
     Ok(conn)
 }
 
-pub fn wipe_profile(app_handle: &tauri::AppHandle, profile_name: &str) -> std::result::Result<(), String> {
-    let app_dir = app_handle
-        .path()
-        .app_data_dir()
-        .map_err(|e| e.to_string())?;
-    
-    let file_name = format!("kechimochi_{}.db", profile_name);
-    let db_path = app_dir.join(file_name);
-    
+pub fn wipe_profile(
+    app_handle: &tauri::AppHandle,
+    profile_name: &str,
+) -> std::result::Result<(), String> {
+    let storage_paths = storage::init(app_handle)?;
+    let db_path = storage_paths.profile_db_path(profile_name);
+
     if db_path.exists() {
-        // Activity logs are wiped with the profile DB deletion. 
+        // Activity logs are wiped with the profile DB deletion.
         // Media remains untouched.
         fs::remove_file(&db_path).map_err(|e| e.to_string())?;
     }
-    
+
     Ok(())
 }
 
 pub fn list_profiles(app_handle: &tauri::AppHandle) -> std::result::Result<Vec<String>, String> {
-    let app_dir = app_handle
-        .path()
-        .app_data_dir()
-        .map_err(|e| e.to_string())?;
+    let storage_paths = storage::init(app_handle)?;
 
     let mut profiles = Vec::new();
-    if let Ok(entries) = fs::read_dir(app_dir) {
+    if let Ok(entries) = fs::read_dir(storage_paths.root_dir) {
         for entry in entries.filter_map(std::result::Result::ok) {
             let path = entry.path();
             if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                if name.starts_with("kechimochi_") && name.ends_with(".db") && name != "kechimochi_shared_media.db" {
-                    let profile_name = name.trim_start_matches("kechimochi_").trim_end_matches(".db");
-                    profiles.push(profile_name.to_string());
+                if let Some(profile_name) = storage::profile_name_from_db(name) {
+                    profiles.push(profile_name);
                 }
             }
         }
@@ -343,7 +521,10 @@ pub fn delete_media(conn: &Connection, id: i64) -> Result<()> {
     }
 
     // Also delete associated logs in the local main DB
-    conn.execute("DELETE FROM main.activity_logs WHERE media_id = ?1", params![id])?;
+    conn.execute(
+        "DELETE FROM main.activity_logs WHERE media_id = ?1",
+        params![id],
+    )?;
     conn.execute("DELETE FROM shared.media WHERE id = ?1", params![id])?;
     Ok(())
 }
@@ -376,7 +557,13 @@ pub fn add_log(conn: &Connection, log: &ActivityLog) -> Result<i64> {
                         WHERE media_id = ?1 AND date = ?2
                     ) + ?4
                  WHERE id = ?5",
-                params![log.media_id, log.date, log.duration_minutes, log.characters_read, id],
+                params![
+                    log.media_id,
+                    log.date,
+                    log.duration_minutes,
+                    log.characters_read,
+                    id
+                ],
             )?;
             conn.execute(
                 "DELETE FROM main.activity_logs
@@ -401,7 +588,13 @@ pub fn delete_log(conn: &Connection, id: i64) -> Result<()> {
     Ok(())
 }
 
-pub fn update_log(conn: &Connection, id: i64, duration_minutes: f64, characters_read: i64, date: &str) -> Result<()> {
+pub fn update_log(
+    conn: &Connection,
+    id: i64,
+    duration_minutes: f64,
+    characters_read: i64,
+    date: &str,
+) -> Result<()> {
     let media_id = conn.query_row(
         "SELECT media_id FROM main.activity_logs WHERE id = ?1",
         params![id],
@@ -434,7 +627,14 @@ pub fn update_log(conn: &Connection, id: i64, duration_minutes: f64, characters_
                         WHERE media_id = ?1 AND date = ?2 AND id != ?3
                     ) + ?5
                  WHERE id = ?6",
-                params![media_id, date, id, duration_minutes, characters_read, keep_id],
+                params![
+                    media_id,
+                    date,
+                    id,
+                    duration_minutes,
+                    characters_read,
+                    keep_id
+                ],
             )?;
             conn.execute(
                 "DELETE FROM main.activity_logs
@@ -591,7 +791,8 @@ mod tests {
 
     fn setup_test_db() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
-        conn.execute("ATTACH DATABASE ':memory:' AS shared", []).unwrap();
+        conn.execute("ATTACH DATABASE ':memory:' AS shared", [])
+            .unwrap();
         create_tables(&conn).unwrap();
         conn
     }
@@ -636,6 +837,70 @@ mod tests {
             .unwrap();
         assert_eq!(count_main, 1);
         assert_eq!(count_shared, 1);
+    }
+
+    #[test]
+    fn test_migrate_legacy_profile_schema_to_shared() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute("ATTACH DATABASE ':memory:' AS shared", [])
+            .unwrap();
+        conn.execute(
+            "CREATE TABLE main.media (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL UNIQUE,
+                media_type TEXT NOT NULL,
+                status TEXT NOT NULL,
+                language TEXT NOT NULL
+            )",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "CREATE TABLE main.activity_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                media_id INTEGER NOT NULL,
+                duration_minutes REAL NOT NULL,
+                date TEXT NOT NULL,
+                FOREIGN KEY(media_id) REFERENCES media(id)
+            )",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO main.media (title, media_type, status, language)
+             VALUES ('Legacy Manga', 'Reading', 'Active', '日本語')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO main.activity_logs (media_id, duration_minutes, date)
+             VALUES (1, 25.0, '2025-01-01')",
+            [],
+        )
+        .unwrap();
+
+        migrate_to_shared(&conn).unwrap();
+        create_tables(&conn).unwrap();
+
+        let media = get_all_media(&conn).unwrap();
+        assert_eq!(media.len(), 1);
+        assert_eq!(media[0].title, "Legacy Manga");
+        assert_eq!(media[0].content_type, "Unknown");
+        assert!(!media[0].nsfw);
+        assert!(!media[0].hidden);
+
+        let logs = get_logs(&conn).unwrap();
+        assert_eq!(logs.len(), 1);
+        assert_eq!(logs[0].characters_read, 0);
+
+        let old_media_table_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM main.sqlite_master WHERE type='table' AND name='media'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(old_media_table_count, 0);
     }
 
     #[test]
@@ -747,20 +1012,28 @@ mod tests {
         let conn = setup_test_db();
         let media_id = add_media_with_id(&conn, &sample_media("同日ログ")).unwrap();
 
-        let first_id = add_log(&conn, &ActivityLog {
-            id: None,
-            media_id,
-            duration_minutes: 25.0,
-            characters_read: 1200,
-            date: "2024-03-01".to_string(),
-        }).unwrap();
-        let second_id = add_log(&conn, &ActivityLog {
-            id: None,
-            media_id,
-            duration_minutes: 35.5,
-            characters_read: 800,
-            date: "2024-03-01".to_string(),
-        }).unwrap();
+        let first_id = add_log(
+            &conn,
+            &ActivityLog {
+                id: None,
+                media_id,
+                duration_minutes: 25.0,
+                characters_read: 1200,
+                date: "2024-03-01".to_string(),
+            },
+        )
+        .unwrap();
+        let second_id = add_log(
+            &conn,
+            &ActivityLog {
+                id: None,
+                media_id,
+                duration_minutes: 35.5,
+                characters_read: 800,
+                date: "2024-03-01".to_string(),
+            },
+        )
+        .unwrap();
 
         assert_eq!(second_id, first_id);
         let logs = get_logs(&conn).unwrap();
@@ -777,20 +1050,28 @@ mod tests {
         let first_media_id = add_media_with_id(&conn, &sample_media("同日A")).unwrap();
         let second_media_id = add_media_with_id(&conn, &sample_media("同日B")).unwrap();
 
-        add_log(&conn, &ActivityLog {
-            id: None,
-            media_id: first_media_id,
-            duration_minutes: 25.0,
-            characters_read: 1200,
-            date: "2024-03-01".to_string(),
-        }).unwrap();
-        add_log(&conn, &ActivityLog {
-            id: None,
-            media_id: second_media_id,
-            duration_minutes: 35.5,
-            characters_read: 800,
-            date: "2024-03-01".to_string(),
-        }).unwrap();
+        add_log(
+            &conn,
+            &ActivityLog {
+                id: None,
+                media_id: first_media_id,
+                duration_minutes: 25.0,
+                characters_read: 1200,
+                date: "2024-03-01".to_string(),
+            },
+        )
+        .unwrap();
+        add_log(
+            &conn,
+            &ActivityLog {
+                id: None,
+                media_id: second_media_id,
+                duration_minutes: 35.5,
+                characters_read: 800,
+                date: "2024-03-01".to_string(),
+            },
+        )
+        .unwrap();
 
         let logs = get_logs(&conn).unwrap();
         assert_eq!(logs.len(), 2);
@@ -803,29 +1084,41 @@ mod tests {
         let media_id = add_media_with_id(&conn, &media).unwrap();
 
         // Two logs on the same day
-        add_log(&conn, &ActivityLog {
-            id: None,
-            media_id,
-            duration_minutes: 30.0,
-            characters_read: 0,
-            date: "2024-06-01".to_string(),
-        }).unwrap();
-        add_log(&conn, &ActivityLog {
-            id: None,
-            media_id,
-            duration_minutes: 45.0,
-            characters_read: 0,
-            date: "2024-06-01".to_string(),
-        }).unwrap();
+        add_log(
+            &conn,
+            &ActivityLog {
+                id: None,
+                media_id,
+                duration_minutes: 30.0,
+                characters_read: 0,
+                date: "2024-06-01".to_string(),
+            },
+        )
+        .unwrap();
+        add_log(
+            &conn,
+            &ActivityLog {
+                id: None,
+                media_id,
+                duration_minutes: 45.0,
+                characters_read: 0,
+                date: "2024-06-01".to_string(),
+            },
+        )
+        .unwrap();
 
         // One log on a different day
-        add_log(&conn, &ActivityLog {
-            id: None,
-            media_id,
-            duration_minutes: 20.0,
-            characters_read: 0,
-            date: "2024-06-02".to_string(),
-        }).unwrap();
+        add_log(
+            &conn,
+            &ActivityLog {
+                id: None,
+                media_id,
+                duration_minutes: 20.0,
+                characters_read: 0,
+                date: "2024-06-02".to_string(),
+            },
+        )
+        .unwrap();
 
         let heatmap = get_heatmap(&conn).unwrap();
         assert_eq!(heatmap.len(), 2);
@@ -895,15 +1188,41 @@ mod tests {
         let conn = setup_test_db();
         let media_id = add_media_with_id(&conn, &sample_media("アグリゲーション")).unwrap();
 
-        add_log(&conn, &ActivityLog { id: None, media_id, duration_minutes: 30.0, characters_read: 1000, date: "2024-02-10".to_string() }).unwrap();
-        add_log(&conn, &ActivityLog { id: None, media_id, duration_minutes: 45.5, characters_read: 500,  date: "2024-02-20".to_string() }).unwrap();
+        add_log(
+            &conn,
+            &ActivityLog {
+                id: None,
+                media_id,
+                duration_minutes: 30.0,
+                characters_read: 1000,
+                date: "2024-02-10".to_string(),
+            },
+        )
+        .unwrap();
+        add_log(
+            &conn,
+            &ActivityLog {
+                id: None,
+                media_id,
+                duration_minutes: 45.5,
+                characters_read: 500,
+                date: "2024-02-20".to_string(),
+            },
+        )
+        .unwrap();
 
         let media_list = get_all_media(&conn).unwrap();
         assert_eq!(media_list.len(), 1);
         let m = &media_list[0];
         assert_eq!(m.total_time_logged, 75.5, "total_time_logged mismatch");
-        assert_eq!(m.total_characters_read, 1500, "total_characters_read mismatch");
-        assert_eq!(m.last_activity_date, "2024-02-20", "last_activity_date mismatch");
+        assert_eq!(
+            m.total_characters_read, 1500,
+            "total_characters_read mismatch"
+        );
+        assert_eq!(
+            m.last_activity_date, "2024-02-20",
+            "last_activity_date mismatch"
+        );
     }
 
     #[test]
@@ -912,13 +1231,17 @@ mod tests {
         let media_id = add_media_with_id(&conn, &sample_media("リミットテスト")).unwrap();
 
         for i in 1..=30i64 {
-            add_log(&conn, &ActivityLog {
-                id: None,
-                media_id,
-                duration_minutes: i as f64,
-                characters_read: 0,
-                date: format!("2024-03-{:02}", i),
-            }).unwrap();
+            add_log(
+                &conn,
+                &ActivityLog {
+                    id: None,
+                    media_id,
+                    duration_minutes: i as f64,
+                    characters_read: 0,
+                    date: format!("2024-03-{:02}", i),
+                },
+            )
+            .unwrap();
         }
 
         let recent = get_recent_logs(&conn, 10).unwrap();
@@ -932,16 +1255,30 @@ mod tests {
     fn test_indexes_exist() {
         let conn = setup_test_db();
         let index_names: Vec<String> = conn
-            .prepare("SELECT name FROM main.sqlite_master WHERE type='index' AND name LIKE 'idx_logs_%'")
+            .prepare(
+                "SELECT name FROM main.sqlite_master WHERE type='index' AND name LIKE 'idx_logs_%'",
+            )
             .unwrap()
             .query_map([], |row| row.get(0))
             .unwrap()
             .filter_map(|r| r.ok())
             .collect();
-        assert!(index_names.contains(&"idx_logs_media_id".to_string()), "Missing idx_logs_media_id");
-        assert!(index_names.contains(&"idx_logs_date".to_string()), "Missing idx_logs_date");
-        assert!(index_names.contains(&"idx_logs_media_date".to_string()), "Missing idx_logs_media_date");
-        assert!(index_names.contains(&"idx_logs_media_date_unique".to_string()), "Missing idx_logs_media_date_unique");
+        assert!(
+            index_names.contains(&"idx_logs_media_id".to_string()),
+            "Missing idx_logs_media_id"
+        );
+        assert!(
+            index_names.contains(&"idx_logs_date".to_string()),
+            "Missing idx_logs_date"
+        );
+        assert!(
+            index_names.contains(&"idx_logs_media_date".to_string()),
+            "Missing idx_logs_media_date"
+        );
+        assert!(
+            index_names.contains(&"idx_logs_media_date_unique".to_string()),
+            "Missing idx_logs_media_date_unique"
+        );
     }
 
     // ── delete_log ────────────────────────────────────────────────────────────
@@ -950,9 +1287,17 @@ mod tests {
     fn test_delete_log() {
         let conn = setup_test_db();
         let media_id = add_media_with_id(&conn, &sample_media("削除テスト")).unwrap();
-        let log_id = add_log(&conn, &ActivityLog {
-            id: None, media_id, duration_minutes: 10.0, characters_read: 0, date: "2024-05-01".to_string(),
-        }).unwrap();
+        let log_id = add_log(
+            &conn,
+            &ActivityLog {
+                id: None,
+                media_id,
+                duration_minutes: 10.0,
+                characters_read: 0,
+                date: "2024-05-01".to_string(),
+            },
+        )
+        .unwrap();
 
         delete_log(&conn, log_id).unwrap();
         let logs = get_logs(&conn).unwrap();
@@ -972,9 +1317,17 @@ mod tests {
     fn test_update_log() {
         let conn = setup_test_db();
         let media_id = add_media_with_id(&conn, &sample_media("更新テスト")).unwrap();
-        let log_id = add_log(&conn, &ActivityLog {
-            id: None, media_id, duration_minutes: 30.0, characters_read: 0, date: "2024-05-01".to_string(),
-        }).unwrap();
+        let log_id = add_log(
+            &conn,
+            &ActivityLog {
+                id: None,
+                media_id,
+                duration_minutes: 30.0,
+                characters_read: 0,
+                date: "2024-05-01".to_string(),
+            },
+        )
+        .unwrap();
 
         update_log(&conn, log_id, 90.5, 1500, "2024-05-15").unwrap();
 
@@ -989,20 +1342,28 @@ mod tests {
     fn test_update_log_merges_same_media_and_date() {
         let conn = setup_test_db();
         let media_id = add_media_with_id(&conn, &sample_media("更新マージ")).unwrap();
-        let keep_id = add_log(&conn, &ActivityLog {
-            id: None,
-            media_id,
-            duration_minutes: 30.0,
-            characters_read: 1000,
-            date: "2024-05-01".to_string(),
-        }).unwrap();
-        let moved_id = add_log(&conn, &ActivityLog {
-            id: None,
-            media_id,
-            duration_minutes: 45.0,
-            characters_read: 2000,
-            date: "2024-05-02".to_string(),
-        }).unwrap();
+        let keep_id = add_log(
+            &conn,
+            &ActivityLog {
+                id: None,
+                media_id,
+                duration_minutes: 30.0,
+                characters_read: 1000,
+                date: "2024-05-01".to_string(),
+            },
+        )
+        .unwrap();
+        let moved_id = add_log(
+            &conn,
+            &ActivityLog {
+                id: None,
+                media_id,
+                duration_minutes: 45.0,
+                characters_read: 2000,
+                date: "2024-05-02".to_string(),
+            },
+        )
+        .unwrap();
 
         update_log(&conn, moved_id, 60.0, 3000, "2024-05-01").unwrap();
 
@@ -1021,10 +1382,17 @@ mod tests {
         let conn = setup_test_db();
         let media_id = add_media_with_id(&conn, &sample_media("クリアテスト")).unwrap();
         for i in 0..5 {
-            add_log(&conn, &ActivityLog {
-                id: None, media_id, duration_minutes: 20.0, characters_read: 0,
-                date: format!("2024-06-{:02}", i + 1),
-            }).unwrap();
+            add_log(
+                &conn,
+                &ActivityLog {
+                    id: None,
+                    media_id,
+                    duration_minutes: 20.0,
+                    characters_read: 0,
+                    date: format!("2024-06-{:02}", i + 1),
+                },
+            )
+            .unwrap();
         }
         assert_eq!(get_logs(&conn).unwrap().len(), 5);
 
@@ -1042,9 +1410,39 @@ mod tests {
         let id1 = add_media_with_id(&conn, &sample_media("タイトルA")).unwrap();
         let id2 = add_media_with_id(&conn, &sample_media("タイトルB")).unwrap();
 
-        add_log(&conn, &ActivityLog { id: None, media_id: id1, duration_minutes: 10.0, characters_read: 0, date: "2024-07-01".to_string() }).unwrap();
-        add_log(&conn, &ActivityLog { id: None, media_id: id1, duration_minutes: 20.0, characters_read: 0, date: "2024-07-02".to_string() }).unwrap();
-        add_log(&conn, &ActivityLog { id: None, media_id: id2, duration_minutes: 30.0, characters_read: 0, date: "2024-07-03".to_string() }).unwrap();
+        add_log(
+            &conn,
+            &ActivityLog {
+                id: None,
+                media_id: id1,
+                duration_minutes: 10.0,
+                characters_read: 0,
+                date: "2024-07-01".to_string(),
+            },
+        )
+        .unwrap();
+        add_log(
+            &conn,
+            &ActivityLog {
+                id: None,
+                media_id: id1,
+                duration_minutes: 20.0,
+                characters_read: 0,
+                date: "2024-07-02".to_string(),
+            },
+        )
+        .unwrap();
+        add_log(
+            &conn,
+            &ActivityLog {
+                id: None,
+                media_id: id2,
+                duration_minutes: 30.0,
+                characters_read: 0,
+                date: "2024-07-03".to_string(),
+            },
+        )
+        .unwrap();
 
         let logs_a = get_logs_for_media(&conn, id1).unwrap();
         assert_eq!(logs_a.len(), 2, "Expected 2 logs for media A");
@@ -1090,13 +1488,24 @@ mod tests {
         let conn = setup_test_db();
         let media_id = add_media_with_id(&conn, &sample_media("フラクション")).unwrap();
         // 1h 30m 45s = 90 + 0.75 = 90.75 minutes
-        add_log(&conn, &ActivityLog {
-            id: None, media_id, duration_minutes: 90.75, characters_read: 0, date: "2024-08-01".to_string(),
-        }).unwrap();
+        add_log(
+            &conn,
+            &ActivityLog {
+                id: None,
+                media_id,
+                duration_minutes: 90.75,
+                characters_read: 0,
+                date: "2024-08-01".to_string(),
+            },
+        )
+        .unwrap();
 
         let logs = get_logs(&conn).unwrap();
-        assert!((logs[0].duration_minutes - 90.75).abs() < 1e-9,
-            "Expected 90.75, got {}", logs[0].duration_minutes);
+        assert!(
+            (logs[0].duration_minutes - 90.75).abs() < 1e-9,
+            "Expected 90.75, got {}",
+            logs[0].duration_minutes
+        );
     }
 
     // ── content-type migration ─────────────────────────────────────────────

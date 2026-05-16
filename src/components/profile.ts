@@ -10,6 +10,12 @@ import {
     showMediaCsvConflictModal, initialProfilePrompt 
 } from '../modals';
 import { READING_TYPES } from '../modals/activity';
+import {
+    clearCurrentProfile,
+    getCurrentProfile,
+    getThemeCacheKey,
+    setCurrentProfile
+} from '../storage';
 import { open, save } from '@tauri-apps/plugin-dialog';
 
 interface ReadingSpeedReportRow {
@@ -31,7 +37,7 @@ interface ProfileState {
 export class ProfileView extends Component<ProfileState> {
     constructor(container: HTMLElement) {
         super(container, {
-            currentProfile: localStorage.getItem('kechimochi_profile') || 'default',
+            currentProfile: getCurrentProfile() || 'default',
             theme: 'pastel-pink',
             dayEndTime: '04:00',
             readingSpeedReport: [],
@@ -250,7 +256,7 @@ export class ProfileView extends Component<ProfileState> {
         root.querySelector('#profile-select-theme')?.addEventListener('change', async (e) => {
             const theme = (e.target as HTMLSelectElement).value;
             await setSetting('theme', theme);
-            localStorage.setItem(`kechimochi_theme_${currentProfile}`, theme);
+            localStorage.setItem(getThemeCacheKey(currentProfile), theme);
             document.body.dataset.theme = theme;
             this.setState({ theme });
         });
@@ -330,7 +336,7 @@ export class ProfileView extends Component<ProfileState> {
                 await deleteProfile(currentProfile);
                 const updatedProfiles = await listProfiles();
                 const nextProfile = updatedProfiles.length > 0 ? updatedProfiles[0] : 'default';
-                localStorage.setItem('kechimochi_profile', nextProfile);
+                setCurrentProfile(nextProfile);
                 await switchProfile(nextProfile);
                 window.location.reload();
             }
@@ -339,9 +345,9 @@ export class ProfileView extends Component<ProfileState> {
         root.querySelector('#profile-btn-wipe-everything')?.addEventListener('click', async () => {
             if (await customPrompt(`DANGER! Type 'WIPE_EVERYTHING' to confirm a total factory reset:`) === 'WIPE_EVERYTHING') {
                 await wipeEverything();
-                localStorage.removeItem('kechimochi_profile');
+                clearCurrentProfile();
                 const initialName = await initialProfilePrompt("User");
-                localStorage.setItem('kechimochi_profile', initialName);
+                setCurrentProfile(initialName);
                 await switchProfile(initialName);
                 window.location.reload();
             }
