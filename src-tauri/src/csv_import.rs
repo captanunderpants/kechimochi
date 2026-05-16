@@ -68,6 +68,7 @@ struct CsvRow {
     media_type: String,
     #[serde(
         rename = "Characters Read",
+        alias = "Characters",
         default,
         deserialize_with = "deserialize_i64_strip_commas"
     )]
@@ -76,6 +77,8 @@ struct CsvRow {
     duration: f64,
     #[serde(rename = "Language", default)]
     language: String,
+    #[serde(rename = "Activity Type", default)]
+    activity_type: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -104,6 +107,55 @@ pub struct MediaConflict {
     pub existing: Option<Media>,
 }
 
+fn normalize_content_type(raw: &str, fallback_media_type: &str) -> String {
+    let trimmed = raw.trim();
+    let source = if trimmed.is_empty() {
+        fallback_media_type.trim()
+    } else {
+        trimmed
+    };
+
+    match source {
+        "Youtube Video" | "YouTube Video" | "YouTube" => "Youtube",
+        "Drama" => "JDrama",
+        "Novel" => "Book",
+        "WebNovel" | "Web Novel" => "Webnovel",
+        "NonFiction" | "Nonfiction" | "Non-Fiction" => "Book",
+        "Videogame" | "Video Game" => "JRPG",
+        "Audio" => "Audiobook",
+        "Livestream" | "Live Stream" => "Youtube",
+        "Reading" => "Book",
+        "Watching" => "Anime",
+        "Playing" => "JRPG",
+        "Listening" => "Podcast",
+        "None" | "" => "Unknown",
+        other => other,
+    }
+    .to_string()
+}
+
+fn media_type_for_content_type(content_type: &str, fallback_media_type: &str) -> String {
+    let media_type = match content_type {
+        "Manga" | "Light Novel" | "Visual Novel" | "Book" | "Webnovel" => "Reading",
+        "JRPG" => "Playing",
+        "Anime" | "Movie" | "Audiobook" | "Podcast" | "JDrama" | "Youtube" => "Listening",
+        _ => match fallback_media_type.trim() {
+            "Reading" => "Reading",
+            "Playing" => "Playing",
+            "Watching" | "Listening" | "None" => "Listening",
+            other if !other.is_empty() => other,
+            _ => "Listening",
+        },
+    };
+
+    media_type.to_string()
+}
+
+fn normalize_media_csv_row(row: &mut MediaCsvRow) {
+    row.content_type = normalize_content_type(&row.content_type, &row.media_type);
+    row.media_type = media_type_for_content_type(&row.content_type, &row.media_type);
+}
+
 pub fn import_csv(conn: &mut Connection, file_path: &str) -> Result<usize, String> {
     let path = Path::new(file_path);
     if !path.exists() {
@@ -127,15 +179,8 @@ pub fn import_csv(conn: &mut Connection, file_path: &str) -> Result<usize, Strin
             }
         };
 
-        // Derive broad media_type from content_type
-        let content_type = record.media_type.clone();
-        let media_type = match content_type.as_str() {
-            "Manga" | "Light Novel" | "Visual Novel" | "Book" | "Webnovel" => "Reading",
-            "JRPG" => "Playing",
-            "Anime" | "Audiobook" | "Podcast" | "JDrama" | "Youtube" => "Listening",
-            other => other, // fallback: use as-is
-        }
-        .to_string();
+        let content_type = normalize_content_type(&record.activity_type, &record.media_type);
+        let media_type = media_type_for_content_type(&content_type, &record.media_type);
 
         // Validate: Reading type requires Characters Read
         if media_type == "Reading" && record.characters_read <= 0 {
@@ -259,13 +304,14 @@ pub fn analyze_media_csv(conn: &Connection, file_path: &str) -> Result<Vec<Media
     let mut conflicts = Vec::new();
 
     for result in rdr.deserialize() {
-        let record: MediaCsvRow = match result {
+        let mut record: MediaCsvRow = match result {
             Ok(r) => r,
             Err(e) => {
                 println!("Error parsing media row: {:?}", e);
                 continue;
             }
         };
+        normalize_media_csv_row(&mut record);
 
         let existing: Option<Media> = conn.query_row(
             "SELECT id, title, media_type, status, language, description, cover_image, extra_data, content_type, tracking_status, nsfw, hidden FROM shared.media WHERE title = ?1",
@@ -311,6 +357,9 @@ pub fn apply_media_import(
     std::fs::create_dir_all(&covers_dir).map_err(|e| e.to_string())?;
 
     for req in records {
+        let mut req = req;
+        normalize_media_csv_row(&mut req);
+
         // Find existing to possibly delete old cover
         let existing_id: Option<i64> = tx
             .query_row(
@@ -711,6 +760,69 @@ mod tests {
         assert_eq!(by_title["アニメ"], "Listening");
         assert_eq!(by_title["マンガ"], "Reading");
         assert_eq!(by_title["ゲーム"], "Playing");
+
+        std::fs::remove_file(csv_path).ok();
+    }
+
+    #[test]
+    fn test_import_main_activity_csv_format() {
+        let mut conn = setup_test_db();
+        let csv_path = write_csv(
+            "Date,Log Name,Media Type,Duration,Language,Characters,Activity Type\n\
+             2024-01-15,ある魔女が死ぬまで,Reading,45,Japanese,1000,Web Novel\n\
+             2024-01-16,呪術廻戦,Watching,25,Japanese,0,Anime\n",
+        );
+
+        let count = import_csv(&mut conn, &csv_path).unwrap();
+        assert_eq!(count, 2);
+
+        let media = db::get_all_media(&conn).unwrap();
+        let by_title: std::collections::HashMap<String, (String, String)> = media
+            .iter()
+            .map(|m| {
+                (
+                    m.title.clone(),
+                    (m.media_type.clone(), m.content_type.clone()),
+                )
+            })
+            .collect();
+        assert_eq!(
+            by_title["ある魔女が死ぬまで"],
+            ("Reading".to_string(), "Webnovel".to_string())
+        );
+        assert_eq!(
+            by_title["呪術廻戦"],
+            ("Listening".to_string(), "Anime".to_string())
+        );
+
+        let logs = db::get_logs(&conn).unwrap();
+        let novel_log = logs
+            .iter()
+            .find(|l| l.title == "ある魔女が死ぬまで")
+            .unwrap();
+        assert_eq!(novel_log.characters_read, 1000);
+
+        std::fs::remove_file(csv_path).ok();
+    }
+
+    #[test]
+    fn test_analyze_main_media_csv_normalizes_content_types() {
+        let conn = setup_test_db();
+        let csv_path = write_csv(
+            "Title,Media Type,Status,Language,Description,Content Type,Extra Data,Cover Image (Base64)\n\
+             Existing,Reading,Active,Japanese,,Novel,{},\n\
+             Game,Playing,Active,Japanese,,Videogame,{},\n\
+             Stream,Watching,Active,Japanese,,Livestream,{},\n",
+        );
+
+        let conflicts = analyze_media_csv(&conn, &csv_path).unwrap();
+        assert_eq!(conflicts.len(), 3);
+        assert_eq!(conflicts[0].incoming.content_type, "Book");
+        assert_eq!(conflicts[0].incoming.media_type, "Reading");
+        assert_eq!(conflicts[1].incoming.content_type, "JRPG");
+        assert_eq!(conflicts[1].incoming.media_type, "Playing");
+        assert_eq!(conflicts[2].incoming.content_type, "Youtube");
+        assert_eq!(conflicts[2].incoming.media_type, "Listening");
 
         std::fs::remove_file(csv_path).ok();
     }

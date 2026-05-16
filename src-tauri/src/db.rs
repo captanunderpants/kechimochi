@@ -88,8 +88,8 @@ fn rebuild_activity_logs_without_fk(conn: &Connection) -> Result<()> {
     let mut insert_columns = vec!["media_id", "duration_minutes", "characters_read", "date"];
     let mut select_columns = vec![
         column_or_default(&columns, "media_id", "0"),
-        column_or_default(&columns, "duration_minutes", "0"),
-        column_or_default(&columns, "characters_read", "0"),
+        column_or_default_any(&columns, &["duration_minutes", "duration"], "0"),
+        column_or_default_any(&columns, &["characters_read", "characters"], "0"),
         column_or_default(&columns, "date", "date('now')"),
     ];
 
@@ -137,6 +137,16 @@ fn column_or_default(columns: &HashSet<String>, column: &str, default: &str) -> 
     } else {
         default.to_string()
     }
+}
+
+fn column_or_default_any(columns: &HashSet<String>, candidates: &[&str], default: &str) -> String {
+    for column in candidates {
+        if columns.contains(*column) {
+            return format!("COALESCE({}, {})", quote_ident(column), default);
+        }
+    }
+
+    default.to_string()
 }
 
 fn quote_ident(ident: &str) -> String {
@@ -336,16 +346,36 @@ fn migrate_content_types(conn: &Connection) -> Result<()> {
         [],
     );
     let _ = conn.execute(
-        "UPDATE shared.media SET content_type = 'Light Novel' WHERE content_type = 'Novel'",
+        "UPDATE shared.media SET content_type = 'Book' WHERE content_type = 'Novel'",
         [],
     );
     let _ = conn.execute(
         "UPDATE shared.media SET content_type = 'JRPG' WHERE content_type = 'Videogame'",
         [],
     );
+    let _ = conn.execute(
+        "UPDATE shared.media SET content_type = 'JRPG' WHERE content_type = 'Video Game'",
+        [],
+    );
+    let _ = conn.execute(
+        "UPDATE shared.media SET content_type = 'Webnovel' WHERE content_type IN ('WebNovel', 'Web Novel')",
+        [],
+    );
+    let _ = conn.execute(
+        "UPDATE shared.media SET content_type = 'Book' WHERE content_type IN ('NonFiction', 'Nonfiction', 'Non-Fiction')",
+        [],
+    );
+    let _ = conn.execute(
+        "UPDATE shared.media SET content_type = 'Audiobook' WHERE content_type = 'Audio'",
+        [],
+    );
+    let _ = conn.execute(
+        "UPDATE shared.media SET content_type = 'Youtube' WHERE content_type IN ('Livestream', 'Live Stream')",
+        [],
+    );
     // Derive media_type from content_type
     let _ = conn.execute("UPDATE shared.media SET media_type = 'Reading' WHERE content_type IN ('Manga', 'Light Novel', 'Visual Novel', 'Book', 'Webnovel')", []);
-    let _ = conn.execute("UPDATE shared.media SET media_type = 'Listening' WHERE content_type IN ('Anime', 'Audiobook', 'Podcast', 'JDrama', 'Youtube')", []);
+    let _ = conn.execute("UPDATE shared.media SET media_type = 'Listening' WHERE content_type IN ('Anime', 'Movie', 'Audiobook', 'Podcast', 'JDrama', 'Youtube')", []);
     let _ = conn.execute(
         "UPDATE shared.media SET media_type = 'Playing' WHERE content_type IN ('JRPG')",
         [],
@@ -860,6 +890,7 @@ mod tests {
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 media_id INTEGER NOT NULL,
                 duration_minutes REAL NOT NULL,
+                characters INTEGER NOT NULL DEFAULT 0,
                 date TEXT NOT NULL,
                 FOREIGN KEY(media_id) REFERENCES media(id)
             )",
@@ -873,8 +904,8 @@ mod tests {
         )
         .unwrap();
         conn.execute(
-            "INSERT INTO main.activity_logs (media_id, duration_minutes, date)
-             VALUES (1, 25.0, '2025-01-01')",
+            "INSERT INTO main.activity_logs (media_id, duration_minutes, characters, date)
+             VALUES (1, 25.0, 1234, '2025-01-01')",
             [],
         )
         .unwrap();
@@ -891,7 +922,7 @@ mod tests {
 
         let logs = get_logs(&conn).unwrap();
         assert_eq!(logs.len(), 1);
-        assert_eq!(logs[0].characters_read, 0);
+        assert_eq!(logs[0].characters_read, 1234);
 
         let old_media_table_count: i64 = conn
             .query_row(
@@ -1530,7 +1561,7 @@ mod tests {
         let yt = media.iter().find(|m| m.title == "レガシー1").unwrap();
         let ln = media.iter().find(|m| m.title == "レガシー2").unwrap();
         assert_eq!(yt.content_type, "Youtube");
-        assert_eq!(ln.content_type, "Light Novel");
+        assert_eq!(ln.content_type, "Book");
     }
 
     // ── media ordering: active before archived ────────────────────────────────
